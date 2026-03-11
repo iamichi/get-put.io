@@ -179,6 +179,23 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!settingsSaved && !jellyfinMessage && !jobMessage && !scheduleMessage) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setSettingsSaved(null);
+      setJellyfinMessage(null);
+      setJobMessage(null);
+      setScheduleMessage(null);
+    }, 4000);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [settingsSaved, jellyfinMessage, jobMessage, scheduleMessage]);
+
   async function handleRunNow() {
     setRunError(null);
     setJobMessage(null);
