@@ -521,6 +521,16 @@ code,
   line-height: 1.6;
 }
 
+.field-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.field-hint.invalid {
+  color: #ffd4d0;
+}
+
 .browser-panel,
 .library-picker {
   border-radius: 22px;

@@ -22,9 +22,7 @@ class StateStore:
 
     def _load(self) -> AppState:
         if not self.path.exists():
-            state = AppState.create_default(
-                str(self.settings.storage_path / "staging"),
-            )
+            state = AppState.create_default()
             self._save(state)
             return state
 

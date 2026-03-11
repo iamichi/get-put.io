@@ -30,7 +30,7 @@ const defaultScheduleDraft: ScheduleDraft = {
   enabled: true,
   mode: "folder",
   folder_path: "/Movies",
-  destination_path: "/media/staging",
+  destination_path: "",
   schedule_type: "daily",
   interval_hours: 6,
   daily_time: "03:00",
@@ -59,7 +59,7 @@ const fallbackDashboard: DashboardResponse = {
       selected_library_ids: [],
     },
     sync_defaults: {
-      destination_path: "/media/staging",
+      destination_path: "",
     },
   },
   connections: [],
@@ -87,7 +87,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("putio");
   const [mode, setMode] = useState<SyncMode>("folder");
   const [folderPath, setFolderPath] = useState("/Movies");
-  const [destination, setDestination] = useState("/media/staging");
+  const [destination, setDestination] = useState("");
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(fallbackDashboard.settings);
   const [settingsSaved, setSettingsSaved] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -106,6 +106,7 @@ export default function App() {
   const [manualTokenSaving, setManualTokenSaving] = useState(false);
   const seededRef = useRef(false);
   const browserPathRef = useRef("/");
+  const legacyDefaultDestination = "/media/staging";
 
   useEffect(() => {
     let active = true;
@@ -136,18 +137,20 @@ export default function App() {
           setJobs(jobsResult);
           setPutioBrowser(browserResult);
           if (!seededRef.current) {
-            setSettingsDraft(dashboardResult.settings);
-            setDestination(
-              dashboardResult.settings.sync_defaults.destination_path ||
-                dashboardResult.destinations[0] ||
-                "/media/staging",
-            );
+            const normalizedDestination =
+              dashboardResult.settings.sync_defaults.destination_path === legacyDefaultDestination
+                ? ""
+                : dashboardResult.settings.sync_defaults.destination_path;
+            setSettingsDraft({
+              ...dashboardResult.settings,
+              sync_defaults: { destination_path: normalizedDestination },
+            });
+            setDestination(normalizedDestination);
             setFolderPath(browserResult.entries[0]?.path ?? "/");
             setScheduleDraft((current) => ({
               ...current,
               folder_path: browserResult.entries[0]?.path ?? "/",
-              destination_path:
-                dashboardResult.settings.sync_defaults.destination_path || "/media/staging",
+              destination_path: normalizedDestination,
             }));
             seededRef.current = true;
           }
@@ -179,11 +182,20 @@ export default function App() {
   async function handleRunNow() {
     setRunError(null);
     setJobMessage(null);
+    const trimmedDestination = destination.trim();
+    if (!trimmedDestination) {
+      setRunError("Enter a full local destination path before running a sync.");
+      return;
+    }
+    if (!trimmedDestination.startsWith("/")) {
+      setRunError("Destination path must be a full absolute local path.");
+      return;
+    }
     try {
       const job = await runSync({
         mode,
         folder_path: mode === "folder" ? folderPath : undefined,
-        destination_path: destination,
+        destination_path: trimmedDestination,
       });
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
     } catch (issue) {
@@ -208,12 +220,23 @@ export default function App() {
     setScheduleSaving(true);
     setScheduleError(null);
     setScheduleMessage(null);
+    const trimmedDestination = destination.trim();
+    if (!trimmedDestination) {
+      setScheduleSaving(false);
+      setScheduleError("Enter a full local destination path before saving a recurring job.");
+      return;
+    }
+    if (!trimmedDestination.startsWith("/")) {
+      setScheduleSaving(false);
+      setScheduleError("Recurring jobs require a full absolute local destination path.");
+      return;
+    }
 
     const payload: ScheduleDraft = {
       ...scheduleDraft,
       mode,
       folder_path: mode === "folder" ? folderPath : null,
-      destination_path: destination,
+      destination_path: trimmedDestination,
     };
 
     try {
@@ -413,6 +436,11 @@ export default function App() {
       timeStyle: "short",
     });
   };
+  const destinationValidationError = !destination.trim()
+    ? "Full local path required."
+    : !destination.trim().startsWith("/")
+      ? "Use an absolute local path."
+      : null;
   const tabs: Array<{ id: AppTab; label: string; note: string }> = [
     { id: "putio", label: "Put.io", note: dashboard.putio_connected ? "Connected" : "Needs auth" },
     {
@@ -753,18 +781,22 @@ export default function App() {
                         sync_defaults: { destination_path: nextValue },
                       }));
                     }}
-                    placeholder="/media/staging"
+                    placeholder="/full/path/on/this/machine"
+                    required
                     value={destination}
                   />
                   <p className="muted-copy">
                     Requires a full local path on the machine running get-put.io.
                   </p>
+                  {destinationValidationError && (
+                    <p className="field-hint invalid">{destinationValidationError}</p>
+                  )}
                 </label>
 
                 <div className="inline-actions">
                   <button
                     className="primary-button"
-                    disabled={!dashboard.putio_connected}
+                    disabled={!dashboard.putio_connected || destinationValidationError !== null}
                     onClick={handleRunNow}
                     type="button"
                   >
@@ -1107,12 +1139,18 @@ export default function App() {
                 </p>
 
                 <div className="inline-actions">
-                  <button className="primary-button" disabled={scheduleSaving} type="submit">
-                    {scheduleSaving
-                      ? "Saving..."
-                      : editingScheduleId
-                        ? "Update recurring job"
-                        : "Save recurring job"}
+                  <button
+                    className="primary-button"
+                    disabled={scheduleSaving || destinationValidationError !== null}
+                    type="submit"
+                  >
+                    {destinationValidationError !== null && !scheduleSaving
+                      ? "Enter destination path"
+                      : scheduleSaving
+                        ? "Saving..."
+                        : editingScheduleId
+                          ? "Update recurring job"
+                          : "Save recurring job"}
                   </button>
                   <button className="ghost-button" onClick={resetScheduleEditor} type="button">
                     Clear editor

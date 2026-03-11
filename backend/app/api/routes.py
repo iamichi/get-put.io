@@ -105,7 +105,7 @@ def dashboard(
         folders=browser.entries,
         putio_browser=browser,
         jellyfin_libraries=jellyfin_libraries,
-        destinations=list(dict.fromkeys(destination_candidates)),
+        destinations=[candidate for candidate in dict.fromkeys(destination_candidates) if candidate],
         jobs=[
             {
                 "id": job.id,

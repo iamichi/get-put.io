@@ -40,7 +40,7 @@ class JellyfinSettings(BaseModel):
 
 
 class SyncDefaults(BaseModel):
-    destination_path: str = "/media/staging"
+    destination_path: str = ""
 
 
 class AppSettings(BaseModel):
@@ -94,7 +94,7 @@ class AppState(BaseModel):
     updated_at: str = Field(default_factory=utc_now)
 
     @classmethod
-    def create_default(cls, destination_path: str) -> "AppState":
+    def create_default(cls, destination_path: str = "") -> "AppState":
         state = cls()
         state.settings.sync_defaults.destination_path = destination_path
         return state
