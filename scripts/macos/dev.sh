@@ -15,6 +15,10 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v rclone >/dev/null 2>&1; then
+  echo "rclone is required for actual sync jobs. Install it with: brew install rclone"
+fi
+
 if [ ! -d "${BACKEND_DIR}/.venv" ]; then
   python3 -m venv "${BACKEND_DIR}/.venv"
 fi

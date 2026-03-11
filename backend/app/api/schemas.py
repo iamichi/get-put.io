@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.models.state import AppSettings
 
 class HealthResponse(BaseModel):
     status: Literal["ok"]
@@ -32,17 +33,21 @@ class JobSummary(BaseModel):
     label: str
     mode: Literal["all", "folder"]
     target_path: str
-    status: Literal["draft", "running", "completed", "failed"]
+    status: Literal["queued", "running", "completed", "failed"]
     last_run: str
+    refresh_triggered: bool = False
 
 
 class DashboardResponse(BaseModel):
     product_name: str
     tagline: str
+    settings: AppSettings
     connections: list[ConnectionStatus]
     folders: list[FolderNode]
     destinations: list[str]
     jobs: list[JobSummary]
+    putio_connected: bool
+    jellyfin_enabled: bool
 
 
 class SyncPreviewRequest(BaseModel):
@@ -54,6 +59,46 @@ class SyncPreviewRequest(BaseModel):
 class SyncPreviewResponse(BaseModel):
     title: str
     command_preview: str
+    command_parts: list[str]
     steps: list[str]
     warnings: list[str]
 
+
+class AuthStartResponse(BaseModel):
+    auth_url: str
+
+
+class SettingsResponse(BaseModel):
+    settings: AppSettings
+
+
+class SaveSettingsRequest(BaseModel):
+    settings: AppSettings
+
+
+class JellyfinTestResponse(BaseModel):
+    ok: bool
+    message: str
+
+
+class JobDetailResponse(BaseModel):
+    id: str
+    label: str
+    mode: Literal["all", "folder"]
+    folder_path: str | None = None
+    destination_path: str
+    status: Literal["queued", "running", "completed", "failed"]
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    command_preview: str
+    warnings: list[str]
+    log_lines: list[str]
+    refresh_requested: bool
+    refresh_triggered: bool
+    files_changed: bool
+    error_message: str | None = None
+
+
+class JobsResponse(BaseModel):
+    jobs: list[JobDetailResponse]

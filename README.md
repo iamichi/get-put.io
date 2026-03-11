@@ -45,16 +45,16 @@ This project intentionally starts as an external service instead of a Jellyfin p
 ## Current scaffold status
 
 This initial repo includes:
-- a FastAPI API skeleton with service boundaries for Put.io, `rclone`, and Jellyfin
-- a polished frontend shell with dashboard-like controls and API-backed sync preview
+- a FastAPI backend with persisted settings, Put.io OAuth, runnable `rclone` jobs, and a Jellyfin refresh hook
+- a polished frontend shell for integration setup, sync previews, and live job logs
 - a single-image Docker build that packages the built frontend with the backend
-- a Proxmox LXC creation script and a macOS local development script
+- a Proxmox LXC creation script plus macOS native and Apple container launch scripts
 
 What is still stubbed:
-- full Put.io OAuth flow
-- persisted job queue and scheduler
-- actual `rclone` execution and progress streaming
-- Jellyfin authentication and library refresh calls
+- recurring job scheduling
+- deeper Put.io folder browsing beyond the root level
+- cancellation, retries, and richer transfer metrics
+- multi-user auth and permissions
 
 ## Quick start: native development
 
@@ -78,6 +78,12 @@ npm run dev
 
 The frontend expects the backend at `http://localhost:8000` by default.
 
+For real sync jobs on macOS, install `rclone` too:
+
+```bash
+brew install rclone
+```
+
 ## Quick start: macOS helper
 
 If you want the native two-process workflow on macOS, use:
@@ -92,7 +98,39 @@ This script creates a Python virtualenv if needed, installs backend dependencies
 
 This repo supports macOS without containers, which is the default recommendation for local development. If you prefer containers on macOS, use a broadly supported runtime such as Docker Desktop, OrbStack, or Colima.
 
-Apple's newer `container` tooling can be explored as an optional path on Apple silicon Macs running macOS 26, but it is not the primary workflow for this repo yet.
+Apple's `container` CLI can also run this project if you are on Apple silicon with macOS 26 and have installed the tool and started its system service.
+
+Quick path:
+
+```bash
+cp .env.example .env
+./scripts/macos/run-apple-container.sh
+```
+
+That script:
+- builds the image from this repo's `Dockerfile`
+- mounts `./data/app` into `/app/data`
+- mounts `./data/media` into `/media`
+- publishes the app on `http://127.0.0.1:8787`
+
+Manual Apple container flow:
+
+```bash
+container system start
+container build --tag get-putio:local --file ./Dockerfile .
+container run -d \
+  --name get-putio \
+  --publish 127.0.0.1:8787:8000 \
+  --env-file ./.env \
+  --volume "$(pwd)/data/app:/app/data" \
+  --volume "$(pwd)/data/media:/media" \
+  get-putio:local
+```
+
+Official references:
+- [Apple container README](https://github.com/apple/container)
+- [Apple container how-to](https://github.com/apple/container/blob/main/docs/how-to.md)
+- [Apple container command reference](https://github.com/apple/container/blob/main/docs/command-reference.md)
 
 ## Quick start: Docker
 
@@ -125,6 +163,8 @@ Important variables:
 - `GET_PUTIO_HOST`
 - `GET_PUTIO_PORT`
 - `GET_PUTIO_STORAGE_PATH`
+- `GET_PUTIO_STATE_PATH`
+- `RCLONE_BINARY`
 - `PUTIO_APP_ID`
 - `PUTIO_CLIENT_SECRET`
 - `PUTIO_REDIRECT_URI`
@@ -135,15 +175,14 @@ Important variables:
 ## Recommended v1 workflow
 
 1. Build the app as a standalone control plane.
-2. Use `rclone` as the transfer layer instead of custom download logic.
-3. Download into a staging path.
-4. Move completed media into the Jellyfin library path.
-5. Trigger a Jellyfin refresh after successful jobs.
+2. Create a Put.io OAuth app and set its redirect URI to this service.
+3. Use `rclone` as the transfer layer instead of custom download logic.
+4. Choose a destination path, ideally a staging path or a Jellyfin library mount.
+5. Trigger a Jellyfin refresh after successful jobs if enabled.
 
 ## Next steps
 
-- implement Put.io OAuth callback handling
-- store connection state and sync jobs in SQLite
-- wrap `rclone` execution with job lifecycle tracking
-- add a scheduling UI and background worker
-- wire Jellyfin refresh and path mapping rules
+- add scheduling and recurring jobs
+- persist richer transfer metrics and job history
+- improve Put.io folder browsing and path mapping
+- add cancellation and retry flows

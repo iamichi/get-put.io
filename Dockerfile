@@ -14,6 +14,10 @@ ENV PYTHONPATH=/app/backend
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends rclone \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY backend/pyproject.toml /app/backend/pyproject.toml
 COPY backend/README.md /app/backend/README.md
 COPY backend/app /app/backend/app

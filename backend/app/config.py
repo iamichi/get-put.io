@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     storage_path: Path = Path("/media")
+    state_path: Path = ROOT_DIR / "data" / "app" / "state.json"
+    rclone_binary: str = Field(default="rclone", alias="RCLONE_BINARY")
 
     putio_app_id: str | None = Field(default=None, alias="PUTIO_APP_ID")
     putio_client_secret: str | None = Field(default=None, alias="PUTIO_CLIENT_SECRET")
