@@ -1,23 +1,39 @@
 import { FormEvent, startTransition, useEffect, useRef, useState } from "react";
 import {
   AppSettings,
+  createSchedule,
   DashboardResponse,
-  JellyfinLibrary,
+  deleteSchedule,
   JobDetail,
   PutioBrowser,
+  RecurringSchedule,
   SyncPreviewResponse,
   browsePutio,
   disconnectPutio,
   fetchDashboard,
   fetchJobs,
   previewSync,
+  runSchedule,
   runSync,
   saveSettings,
   startPutioAuth,
   testJellyfin,
+  updateSchedule,
 } from "./lib/api";
 
 type SyncMode = "all" | "folder";
+type ScheduleDraft = Omit<RecurringSchedule, "id" | "next_run_at" | "last_run_at" | "last_job_id">;
+
+const defaultScheduleDraft: ScheduleDraft = {
+  name: "Nightly sync",
+  enabled: true,
+  mode: "folder",
+  folder_path: "/Movies",
+  destination_path: "/media/staging",
+  schedule_type: "daily",
+  interval_hours: 6,
+  daily_time: "03:00",
+};
 
 const fallbackDashboard: DashboardResponse = {
   product_name: "get-put.io",
@@ -56,6 +72,7 @@ const fallbackDashboard: DashboardResponse = {
   jellyfin_libraries: [],
   destinations: [],
   jobs: [],
+  schedules: [],
   putio_connected: false,
   jellyfin_enabled: false,
 };
@@ -80,6 +97,11 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [browserLoading, setBrowserLoading] = useState(false);
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(defaultScheduleDraft);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleMessage, setScheduleMessage] = useState<string | null>(null);
   const seededRef = useRef(false);
   const browserPathRef = useRef("/");
 
@@ -119,6 +141,12 @@ export default function App() {
                 "/media/staging",
             );
             setFolderPath(browserResult.entries[0]?.path ?? "/");
+            setScheduleDraft((current) => ({
+              ...current,
+              folder_path: browserResult.entries[0]?.path ?? "/",
+              destination_path:
+                dashboardResult.settings.sync_defaults.destination_path || "/media/staging",
+            }));
             seededRef.current = true;
           }
           setError(null);
@@ -177,6 +205,93 @@ export default function App() {
     } catch (issue) {
       setRunError(issue instanceof Error ? issue.message : "Unable to run job.");
     }
+  }
+
+  async function handleSaveSchedule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setScheduleSaving(true);
+    setScheduleError(null);
+    setScheduleMessage(null);
+
+    const payload: ScheduleDraft = {
+      ...scheduleDraft,
+      mode,
+      folder_path: mode === "folder" ? folderPath : null,
+      destination_path: destination,
+    };
+
+    try {
+      if (editingScheduleId) {
+        await updateSchedule(editingScheduleId, payload);
+        setScheduleMessage("Recurring job updated.");
+      } else {
+        await createSchedule(payload);
+        setScheduleMessage("Recurring job created.");
+      }
+      setEditingScheduleId(null);
+      setScheduleDraft({
+        ...defaultScheduleDraft,
+        mode,
+        folder_path: mode === "folder" ? folderPath : null,
+        destination_path: destination,
+      });
+    } catch (issue) {
+      setScheduleError(issue instanceof Error ? issue.message : "Unable to save recurring job.");
+    } finally {
+      setScheduleSaving(false);
+    }
+  }
+
+  async function handleRunSchedule(scheduleId: string) {
+    setScheduleError(null);
+    try {
+      const job = await runSchedule(scheduleId);
+      setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
+      setScheduleMessage("Recurring job triggered.");
+    } catch (issue) {
+      setScheduleError(issue instanceof Error ? issue.message : "Unable to trigger schedule.");
+    }
+  }
+
+  async function handleDeleteSchedule(scheduleId: string) {
+    setScheduleError(null);
+    try {
+      await deleteSchedule(scheduleId);
+      if (editingScheduleId === scheduleId) {
+        setEditingScheduleId(null);
+        setScheduleDraft(defaultScheduleDraft);
+      }
+      setScheduleMessage("Recurring job deleted.");
+    } catch (issue) {
+      setScheduleError(issue instanceof Error ? issue.message : "Unable to delete schedule.");
+    }
+  }
+
+  function handleEditSchedule(schedule: RecurringSchedule) {
+    setEditingScheduleId(schedule.id);
+    setMode(schedule.mode);
+    setFolderPath(schedule.folder_path ?? "/");
+    setDestination(schedule.destination_path);
+    setScheduleDraft({
+      name: schedule.name,
+      enabled: schedule.enabled,
+      mode: schedule.mode,
+      folder_path: schedule.folder_path ?? null,
+      destination_path: schedule.destination_path,
+      schedule_type: schedule.schedule_type,
+      interval_hours: schedule.interval_hours,
+      daily_time: schedule.daily_time,
+    });
+  }
+
+  function resetScheduleEditor() {
+    setEditingScheduleId(null);
+    setScheduleDraft({
+      ...defaultScheduleDraft,
+      mode,
+      folder_path: mode === "folder" ? folderPath : null,
+      destination_path: destination,
+    });
   }
 
   async function handleSaveSettings(event: FormEvent<HTMLFormElement>) {
@@ -697,6 +812,157 @@ export default function App() {
         </section>
 
         <section className="jobs-grid">
+          <article className="panel">
+            <div className="section-heading">
+              <h2>Recurring jobs</h2>
+              <span className="small-note">
+                {dashboard.schedules.length ? `${dashboard.schedules.length} saved` : "No schedules yet"}
+              </span>
+            </div>
+
+            <form className="settings-form" onSubmit={handleSaveSchedule}>
+              <label>
+                <span>Schedule name</span>
+                <input
+                  onChange={(event) =>
+                    setScheduleDraft((current) => ({ ...current, name: event.target.value }))
+                  }
+                  value={scheduleDraft.name}
+                />
+              </label>
+
+              <label className="toggle-row">
+                <input
+                  checked={scheduleDraft.enabled}
+                  onChange={(event) =>
+                    setScheduleDraft((current) => ({ ...current, enabled: event.target.checked }))
+                  }
+                  type="checkbox"
+                />
+                <span>Enable recurring job</span>
+              </label>
+
+              <label>
+                <span>Schedule type</span>
+                <div className="mode-toggle">
+                  <button
+                    className={
+                      scheduleDraft.schedule_type === "daily" ? "mode-option active" : "mode-option"
+                    }
+                    onClick={() =>
+                      setScheduleDraft((current) => ({ ...current, schedule_type: "daily" }))
+                    }
+                    type="button"
+                  >
+                    Daily
+                  </button>
+                  <button
+                    className={
+                      scheduleDraft.schedule_type === "interval"
+                        ? "mode-option active"
+                        : "mode-option"
+                    }
+                    onClick={() =>
+                      setScheduleDraft((current) => ({ ...current, schedule_type: "interval" }))
+                    }
+                    type="button"
+                  >
+                    Interval
+                  </button>
+                </div>
+              </label>
+
+              {scheduleDraft.schedule_type === "daily" ? (
+                <label>
+                  <span>Daily run time</span>
+                  <input
+                    onChange={(event) =>
+                      setScheduleDraft((current) => ({ ...current, daily_time: event.target.value }))
+                    }
+                    type="time"
+                    value={scheduleDraft.daily_time}
+                  />
+                </label>
+              ) : (
+                <label>
+                  <span>Interval hours</span>
+                  <input
+                    min={1}
+                    max={168}
+                    onChange={(event) =>
+                      setScheduleDraft((current) => ({
+                        ...current,
+                        interval_hours: Number(event.target.value) || 1,
+                      }))
+                    }
+                    type="number"
+                    value={scheduleDraft.interval_hours}
+                  />
+                </label>
+              )}
+
+              <p className="muted-copy">
+                This saves the current sync selection: {mode === "all" ? "all Put.io content" : folderPath} to{" "}
+                {destination}.
+              </p>
+
+              <div className="inline-actions">
+                <button className="primary-button" disabled={scheduleSaving} type="submit">
+                  {scheduleSaving
+                    ? "Saving..."
+                    : editingScheduleId
+                      ? "Update recurring job"
+                      : "Save recurring job"}
+                </button>
+                <button className="ghost-button" onClick={resetScheduleEditor} type="button">
+                  Clear editor
+                </button>
+              </div>
+            </form>
+
+            {scheduleError && <p className="error-banner">{scheduleError}</p>}
+            {scheduleMessage && <p className="success-banner">{scheduleMessage}</p>}
+
+            <div className="jobs-list schedule-list">
+              {dashboard.schedules.map((schedule) => (
+                <div className="job-row schedule-row" key={schedule.id}>
+                  <div>
+                    <strong>{schedule.name}</strong>
+                    <p>
+                      {schedule.mode === "all" ? "Full library" : schedule.folder_path} to{" "}
+                      {schedule.destination_path}
+                    </p>
+                    <p>
+                      {schedule.schedule_type === "daily"
+                        ? `Daily at ${schedule.daily_time}`
+                        : `Every ${schedule.interval_hours} hour${schedule.interval_hours === 1 ? "" : "s"}`}
+                    </p>
+                    <p>
+                      Next run: {schedule.next_run_at ?? "disabled"} · Last run: {schedule.last_run_at ?? "never"}
+                    </p>
+                  </div>
+                  <div className="row-actions">
+                    <span className={schedule.enabled ? "status-pill online" : "status-pill muted"}>
+                      {schedule.enabled ? "enabled" : "paused"}
+                    </span>
+                    <button className="ghost-button small-button" onClick={() => handleEditSchedule(schedule)} type="button">
+                      Edit
+                    </button>
+                    <button className="ghost-button small-button" onClick={() => void handleRunSchedule(schedule.id)} type="button">
+                      Run now
+                    </button>
+                    <button className="ghost-button small-button" onClick={() => void handleDeleteSchedule(schedule.id)} type="button">
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {!dashboard.schedules.length && (
+                <p className="empty-state">Save the current sync selection as a recurring job to schedule it.</p>
+              )}
+            </div>
+          </article>
+
           <article className="panel">
             <div className="section-heading">
               <h2>Recent jobs</h2>

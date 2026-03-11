@@ -51,7 +51,6 @@ This initial repo includes:
 - a Proxmox LXC creation script plus macOS native and Apple container launch scripts
 
 What is still stubbed:
-- recurring job scheduling
 - cancellation, retries, and richer transfer metrics
 - multi-user auth and permissions
 
@@ -163,6 +162,8 @@ Important variables:
 - `GET_PUTIO_PORT`
 - `GET_PUTIO_STORAGE_PATH`
 - `GET_PUTIO_STATE_PATH`
+- `GET_PUTIO_SCHEDULE_TIMEZONE`
+- `GET_PUTIO_SCHEDULER_POLL_SECONDS`
 - `RCLONE_BINARY`
 - `PUTIO_APP_ID`
 - `PUTIO_CLIENT_SECRET`
@@ -177,7 +178,8 @@ Important variables:
 2. Create a Put.io OAuth app and set its redirect URI to this service.
 3. Use `rclone` as the transfer layer instead of custom download logic.
 4. Choose a destination path, ideally a staging path or a Jellyfin library mount.
-5. Trigger a Jellyfin refresh after successful jobs if enabled.
+5. Save recurring jobs for your common sync lanes if you want hands-off imports.
+6. Trigger a Jellyfin refresh after successful jobs if enabled.
 
 ## Next steps
 

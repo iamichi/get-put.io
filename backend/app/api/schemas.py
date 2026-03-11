@@ -58,6 +58,21 @@ class JobSummary(BaseModel):
     refresh_triggered: bool = False
 
 
+class ScheduleResponse(BaseModel):
+    id: str
+    name: str
+    enabled: bool
+    mode: Literal["all", "folder"]
+    folder_path: str | None = None
+    destination_path: str
+    schedule_type: Literal["interval", "daily"]
+    interval_hours: int
+    daily_time: str
+    next_run_at: str | None = None
+    last_run_at: str | None = None
+    last_job_id: str | None = None
+
+
 class DashboardResponse(BaseModel):
     product_name: str
     tagline: str
@@ -68,6 +83,7 @@ class DashboardResponse(BaseModel):
     jellyfin_libraries: list[JellyfinLibrary]
     destinations: list[str]
     jobs: list[JobSummary]
+    schedules: list[ScheduleResponse]
     putio_connected: bool
     jellyfin_enabled: bool
 
@@ -128,3 +144,18 @@ class JobDetailResponse(BaseModel):
 
 class JobsResponse(BaseModel):
     jobs: list[JobDetailResponse]
+
+
+class SaveScheduleRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    enabled: bool = True
+    mode: Literal["all", "folder"] = "all"
+    folder_path: str | None = None
+    destination_path: str = Field(..., min_length=1)
+    schedule_type: Literal["interval", "daily"] = "interval"
+    interval_hours: int = Field(default=6, ge=1, le=168)
+    daily_time: str = Field(default="03:00", pattern=r"^\d{2}:\d{2}$")
+
+
+class SchedulesResponse(BaseModel):
+    schedules: list[ScheduleResponse]

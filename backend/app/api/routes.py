@@ -12,7 +12,10 @@ from app.api.schemas import (
     JobDetailResponse,
     JobsResponse,
     PutioBrowserResponse,
+    SaveScheduleRequest,
     SaveSettingsRequest,
+    ScheduleResponse,
+    SchedulesResponse,
     SettingsResponse,
     SyncPreviewRequest,
     SyncPreviewResponse,
@@ -22,6 +25,7 @@ from app.models.state import AppState
 from app.services.jobs import JobService
 from app.services.jellyfin import JellyfinService
 from app.services.putio import PutioService
+from app.services.scheduler import SchedulerService, get_scheduler_service
 from app.services.state import StateStore, get_state_store
 from app.models.state import utc_now
 
@@ -38,6 +42,10 @@ def state_store_dependency() -> StateStore:
 
 def state_dependency(store: StateStore = Depends(state_store_dependency)) -> AppState:
     return store.snapshot()
+
+
+def scheduler_dependency() -> SchedulerService:
+    return get_scheduler_service()
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -104,6 +112,10 @@ def dashboard(
                 "refresh_triggered": job.refresh_triggered,
             }
             for job in state.latest_jobs(limit=10)
+        ],
+        schedules=[
+            ScheduleResponse.model_validate(schedule.model_dump())
+            for schedule in get_scheduler_service().list_schedules()
         ],
         putio_connected=state.settings.putio.token is not None,
         jellyfin_enabled=state.settings.jellyfin.enabled,
@@ -262,6 +274,67 @@ def run_job(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return JobDetailResponse.model_validate(job.model_dump())
+
+
+@router.get("/schedules", response_model=SchedulesResponse)
+def list_schedules(scheduler: SchedulerService = Depends(scheduler_dependency)) -> SchedulesResponse:
+    schedules = scheduler.list_schedules()
+    return SchedulesResponse(
+        schedules=[ScheduleResponse.model_validate(schedule.model_dump()) for schedule in schedules]
+    )
+
+
+@router.post("/schedules", response_model=ScheduleResponse)
+def create_schedule(
+    payload: SaveScheduleRequest,
+    scheduler: SchedulerService = Depends(scheduler_dependency),
+) -> ScheduleResponse:
+    schedule = scheduler.create_schedule(**payload.model_dump())
+    return ScheduleResponse.model_validate(schedule.model_dump())
+
+
+@router.put("/schedules/{schedule_id}", response_model=ScheduleResponse)
+def update_schedule(
+    schedule_id: str,
+    payload: SaveScheduleRequest,
+    scheduler: SchedulerService = Depends(scheduler_dependency),
+) -> ScheduleResponse:
+    try:
+        schedule = scheduler.update_schedule(schedule_id, **payload.model_dump())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Schedule not found.") from exc
+    return ScheduleResponse.model_validate(schedule.model_dump())
+
+
+@router.post("/schedules/{schedule_id}/run", response_model=JobDetailResponse)
+def run_schedule(
+    schedule_id: str,
+    scheduler: SchedulerService = Depends(scheduler_dependency),
+    settings: Settings = Depends(settings_dependency),
+    store: StateStore = Depends(state_store_dependency),
+) -> JobDetailResponse:
+    try:
+        scheduler.trigger_schedule(schedule_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Schedule not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    schedule = scheduler.get_schedule(schedule_id)
+    if schedule is None or schedule.last_job_id is None:
+        raise HTTPException(status_code=500, detail="Schedule trigger failed.")
+    job = JobService(settings, store).get_job(schedule.last_job_id)
+    if job is None:
+        raise HTTPException(status_code=500, detail="Scheduled job record missing.")
+    return JobDetailResponse.model_validate(job.model_dump())
+
+
+@router.delete("/schedules/{schedule_id}", status_code=204)
+def delete_schedule(
+    schedule_id: str,
+    scheduler: SchedulerService = Depends(scheduler_dependency),
+) -> None:
+    scheduler.delete_schedule(schedule_id)
 
 
 @router.get("/jobs", response_model=JobsResponse)

@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -7,9 +8,22 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
 from app.config import get_settings
+from app.services.scheduler import get_scheduler_service
 
 settings = get_settings()
-app = FastAPI(title=settings.product_name)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    scheduler = get_scheduler_service()
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.stop()
+
+
+app = FastAPI(title=settings.product_name, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,4 +53,3 @@ if static_dir.exists():
         if candidate.exists() and candidate.is_file():
             return FileResponse(candidate)
         return FileResponse(static_dir / "index.html")
-

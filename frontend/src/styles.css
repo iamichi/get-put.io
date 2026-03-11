@@ -277,6 +277,17 @@ code,
   background: rgba(255, 255, 255, 0.03);
 }
 
+.row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  align-items: flex-end;
+}
+
+.small-button {
+  padding: 0.55rem 0.85rem;
+}
+
 .connection-row p,
 .job-row p,
 .empty-state,
@@ -544,5 +555,9 @@ code,
   .connection-row,
   .job-row {
     flex-direction: column;
+  }
+
+  .row-actions {
+    align-items: stretch;
   }
 }

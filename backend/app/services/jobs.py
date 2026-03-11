@@ -6,6 +6,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from app.api.schemas import SyncPreviewRequest, SyncPreviewResponse
 from app.config import Settings
@@ -30,15 +31,24 @@ class JobService:
         state = self.state_store.snapshot()
         return RcloneService(self.settings, state).preview(payload)
 
-    def start_job(self, payload: SyncPreviewRequest) -> SyncJobRecord:
+    def start_job(
+        self,
+        payload: SyncPreviewRequest,
+        *,
+        label: str | None = None,
+        schedule_id: str | None = None,
+        triggered_by: Literal["manual", "schedule"] = "manual",
+    ) -> SyncJobRecord:
         state = self.state_store.snapshot()
         if state.settings.putio.token is None:
             raise ValueError("Connect Put.io before starting a sync job.")
         preview = RcloneService(self.settings, state).preview(payload)
-        label = "Full library sync" if payload.mode == "all" else f"Sync {payload.folder_path}"
+        resolved_label = label or (
+            "Full library sync" if payload.mode == "all" else f"Sync {payload.folder_path}"
+        )
         job = SyncJobRecord(
             id=f"job-{uuid.uuid4().hex[:12]}",
-            label=label,
+            label=resolved_label,
             mode=payload.mode,
             folder_path=payload.folder_path,
             destination_path=payload.destination_path,
@@ -47,6 +57,8 @@ class JobService:
             warnings=preview.warnings,
             refresh_requested=state.settings.jellyfin.enabled
             and state.settings.jellyfin.refresh_after_sync,
+            schedule_id=schedule_id,
+            triggered_by=triggered_by,
         )
         self.state_store.mutate(lambda current: current.append_job(job))
 

@@ -33,6 +33,21 @@ export type JobSummary = {
   refresh_triggered: boolean;
 };
 
+export type RecurringSchedule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  mode: "all" | "folder";
+  folder_path?: string | null;
+  destination_path: string;
+  schedule_type: "interval" | "daily";
+  interval_hours: number;
+  daily_time: string;
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  last_job_id?: string | null;
+};
+
 export type PutioToken = {
   access_token: string;
   token_type: string;
@@ -82,6 +97,7 @@ export type DashboardResponse = {
   jellyfin_libraries: JellyfinLibrary[];
   destinations: string[];
   jobs: JobSummary[];
+  schedules: RecurringSchedule[];
   putio_connected: boolean;
   jellyfin_enabled: boolean;
 };
@@ -188,6 +204,65 @@ export async function runSync(payload: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function fetchSchedules(): Promise<RecurringSchedule[]> {
+  const response = await fetch(`${API_BASE_URL}/api/schedules`);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  const payload = await response.json();
+  return payload.schedules;
+}
+
+export async function createSchedule(payload: Omit<RecurringSchedule, "id" | "next_run_at" | "last_run_at" | "last_job_id">): Promise<RecurringSchedule> {
+  const response = await fetch(`${API_BASE_URL}/api/schedules`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function updateSchedule(
+  scheduleId: string,
+  payload: Omit<RecurringSchedule, "id" | "next_run_at" | "last_run_at" | "last_job_id">,
+): Promise<RecurringSchedule> {
+  const response = await fetch(`${API_BASE_URL}/api/schedules/${scheduleId}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function deleteSchedule(scheduleId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/schedules/${scheduleId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+}
+
+export async function runSchedule(scheduleId: string): Promise<JobDetail> {
+  const response = await fetch(`${API_BASE_URL}/api/schedules/${scheduleId}/run`, {
+    method: "POST",
   });
   if (!response.ok) {
     throw new Error(await readError(response));

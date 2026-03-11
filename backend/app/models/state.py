@@ -66,11 +66,31 @@ class SyncJobRecord(BaseModel):
     refresh_triggered: bool = False
     files_changed: bool = False
     error_message: str | None = None
+    schedule_id: str | None = None
+    triggered_by: Literal["manual", "schedule"] = "manual"
+
+
+class RecurringSchedule(BaseModel):
+    id: str
+    name: str
+    enabled: bool = True
+    mode: Literal["all", "folder"]
+    folder_path: str | None = None
+    destination_path: str
+    schedule_type: Literal["interval", "daily"] = "interval"
+    interval_hours: int = 6
+    daily_time: str = "03:00"
+    next_run_at: str | None = None
+    last_run_at: str | None = None
+    last_job_id: str | None = None
+    created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
 
 
 class AppState(BaseModel):
     settings: AppSettings = Field(default_factory=AppSettings)
     jobs: list[SyncJobRecord] = Field(default_factory=list)
+    schedules: list[RecurringSchedule] = Field(default_factory=list)
     updated_at: str = Field(default_factory=utc_now)
 
     @classmethod
@@ -103,3 +123,23 @@ class AppState(BaseModel):
             setattr(job, key, value)
         self.touch()
         return job
+
+    def get_schedule(self, schedule_id: str) -> RecurringSchedule | None:
+        for schedule in self.schedules:
+            if schedule.id == schedule_id:
+                return schedule
+        return None
+
+    def upsert_schedule(self, schedule: RecurringSchedule) -> RecurringSchedule:
+        existing = self.get_schedule(schedule.id)
+        if existing is None:
+            self.schedules.append(schedule)
+        else:
+            index = self.schedules.index(existing)
+            self.schedules[index] = schedule
+        self.touch()
+        return schedule
+
+    def delete_schedule(self, schedule_id: str) -> None:
+        self.schedules = [schedule for schedule in self.schedules if schedule.id != schedule_id]
+        self.touch()
