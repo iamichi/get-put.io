@@ -1,3 +1,5 @@
+from html import escape
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
@@ -35,6 +37,14 @@ router = APIRouter(prefix="/api")
 
 def dashboard_url(settings: Settings) -> str:
     return settings.frontend_url.rstrip("/") or "/"
+
+
+def oauth_error_page(message: str, *, status_code: int = 400) -> HTMLResponse:
+    safe_message = escape(message)
+    return HTMLResponse(
+        f"<h1>Put.io login failed</h1><p>{safe_message}</p>",
+        status_code=status_code,
+    )
 
 
 def settings_dependency() -> Settings:
@@ -162,7 +172,13 @@ def save_settings(
     store: StateStore = Depends(state_store_dependency),
 ) -> SettingsResponse:
     def mutate(state: AppState) -> AppState:
-        state.settings = payload.settings
+        next_settings = payload.settings.model_copy(deep=True)
+        next_settings.putio.token = state.settings.putio.token
+        next_settings.putio.oauth_state = state.settings.putio.oauth_state
+        next_settings.putio.account_username = state.settings.putio.account_username
+        next_settings.putio.account_user_id = state.settings.putio.account_user_id
+        next_settings.putio.connected_at = state.settings.putio.connected_at
+        state.settings = next_settings
         return state
 
     state = store.mutate(mutate)
@@ -197,20 +213,20 @@ def putio_callback(
     store: StateStore = Depends(state_store_dependency),
 ) -> HTMLResponse:
     if error:
-        return HTMLResponse(f"<h1>Put.io login failed</h1><p>{error}</p>", status_code=400)
+        return oauth_error_page(error)
 
     current = store.snapshot()
     if state != current.settings.putio.oauth_state:
-        return HTMLResponse("<h1>Put.io login failed</h1><p>Invalid state token.</p>", status_code=400)
+        return oauth_error_page("Invalid state token.")
     if code is None:
-        return HTMLResponse("<h1>Put.io login failed</h1><p>No code returned.</p>", status_code=400)
+        return oauth_error_page("No code returned.")
 
     service = PutioService(settings, current)
     try:
         token = service.exchange_code(code)
         user_id, username = service.fetch_account(token)
     except Exception as exc:  # pragma: no cover - external API failure path
-        return HTMLResponse(f"<h1>Put.io login failed</h1><p>{exc}</p>", status_code=400)
+        return oauth_error_page(str(exc))
 
     def mutate(state_model: AppState) -> None:
         state_model.settings.putio.token = token
@@ -220,7 +236,7 @@ def putio_callback(
         state_model.settings.putio.oauth_state = None
 
     store.mutate(mutate)
-    return_url = dashboard_url(settings)
+    return_url = escape(dashboard_url(settings), quote=True)
     return HTMLResponse(
         f"""
         <html>

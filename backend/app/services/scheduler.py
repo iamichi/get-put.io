@@ -113,13 +113,15 @@ class SchedulerService:
             schedule_id=schedule.id,
             triggered_by="schedule",
         )
+        triggered_at = datetime.now(timezone.utc)
 
         def mutate(state: AppState) -> None:
             current = state.get_schedule(schedule_id)
             if current is None:
                 return
-            current.last_run_at = utc_now()
+            current.last_run_at = triggered_at.isoformat()
             current.last_job_id = job.id
+            current.next_run_at = self.compute_next_run(current, from_utc=triggered_at).isoformat()
             current.updated_at = utc_now()
 
         self.state_store.mutate(mutate)
@@ -154,21 +156,15 @@ class SchedulerService:
 
     def _claim_due_schedules(self) -> list[RecurringSchedule]:
         now_utc = datetime.now(timezone.utc)
-
-        def mutate(state: AppState) -> list[RecurringSchedule]:
-            claimed: list[RecurringSchedule] = []
-            for schedule in state.schedules:
-                if not schedule.enabled or not schedule.next_run_at:
-                    continue
-                if _parse_iso(schedule.next_run_at) > now_utc:
-                    continue
-                schedule.last_run_at = now_utc.isoformat()
-                schedule.next_run_at = self.compute_next_run(schedule, from_utc=now_utc).isoformat()
-                schedule.updated_at = utc_now()
-                claimed.append(schedule.model_copy(deep=True))
-            return claimed
-
-        return self.state_store.mutate(mutate)
+        schedules = self.state_store.snapshot().schedules
+        claimed: list[RecurringSchedule] = []
+        for schedule in schedules:
+            if not schedule.enabled or not schedule.next_run_at:
+                continue
+            if _parse_iso(schedule.next_run_at) > now_utc:
+                continue
+            claimed.append(schedule.model_copy(deep=True))
+        return claimed
 
     def compute_next_run(
         self,
