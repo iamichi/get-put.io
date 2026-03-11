@@ -22,7 +22,7 @@ class PutioToken(BaseModel):
 class PutioSettings(BaseModel):
     app_id: str = ""
     client_secret: str = ""
-    redirect_uri: str = "http://localhost:8787/api/auth/putio/callback"
+    redirect_uri: str = "http://localhost:8000/api/auth/putio/callback"
     token: PutioToken | None = None
     oauth_state: str | None = None
     account_username: str | None = None

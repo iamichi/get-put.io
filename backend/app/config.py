@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     putio_app_id: str | None = Field(default=None, alias="PUTIO_APP_ID")
     putio_client_secret: str | None = Field(default=None, alias="PUTIO_CLIENT_SECRET")
     putio_redirect_uri: str = Field(
-        default="http://localhost:8787/api/auth/putio/callback",
+        default="http://localhost:8000/api/auth/putio/callback",
         alias="PUTIO_REDIRECT_URI",
     )
     putio_access_token: str | None = Field(default=None, alias="PUTIO_ACCESS_TOKEN")

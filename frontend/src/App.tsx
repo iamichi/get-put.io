@@ -16,6 +16,7 @@ import {
   runSchedule,
   runSync,
   saveSettings,
+  savePutioManualToken,
   startPutioAuth,
   testJellyfin,
   updateSchedule,
@@ -42,7 +43,7 @@ const fallbackDashboard: DashboardResponse = {
     putio: {
       app_id: "",
       client_secret: "",
-      redirect_uri: "http://localhost:8787/api/auth/putio/callback",
+      redirect_uri: "http://localhost:8000/api/auth/putio/callback",
       token: null,
       oauth_state: null,
       account_username: null,
@@ -102,6 +103,8 @@ export default function App() {
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [scheduleMessage, setScheduleMessage] = useState<string | null>(null);
+  const [manualToken, setManualToken] = useState("");
+  const [manualTokenSaving, setManualTokenSaving] = useState(false);
   const seededRef = useRef(false);
   const browserPathRef = useRef("/");
 
@@ -328,6 +331,7 @@ export default function App() {
       await disconnectPutio();
       browserPathRef.current = "/";
       setPutioBrowser(fallbackDashboard.putio_browser);
+      setManualToken("");
       setSettingsSaved("Put.io disconnected.");
     } catch (issue) {
       setSettingsError(issue instanceof Error ? issue.message : "Unable to disconnect Put.io.");
@@ -344,6 +348,20 @@ export default function App() {
       setJellyfinMessage(message);
     } catch (issue) {
       setSettingsError(issue instanceof Error ? issue.message : "Unable to test Jellyfin.");
+    }
+  }
+
+  async function handleSaveManualToken() {
+    setSettingsError(null);
+    setManualTokenSaving(true);
+    try {
+      await savePutioManualToken(manualToken);
+      setSettingsSaved("Put.io token saved.");
+      setManualToken("");
+    } catch (issue) {
+      setSettingsError(issue instanceof Error ? issue.message : "Unable to save Put.io token.");
+    } finally {
+      setManualTokenSaving(false);
     }
   }
 
@@ -388,6 +406,8 @@ export default function App() {
   const selectedLibraries = dashboard.jellyfin_libraries.filter((library) =>
     selectedLibraryIds.has(library.id),
   );
+  const nativeRedirectUri = "http://localhost:8000/api/auth/putio/callback";
+  const containerRedirectUri = "http://localhost:8787/api/auth/putio/callback";
 
   return (
     <div className="page-shell">
@@ -436,7 +456,7 @@ export default function App() {
             </div>
             <form className="settings-form" onSubmit={handleSaveSettings}>
               <label>
-                <span>Put.io app ID</span>
+                <span>Put.io client ID</span>
                 <input
                   onChange={(event) =>
                     setSettingsDraft((current) => ({
@@ -472,6 +492,60 @@ export default function App() {
                   value={settingsDraft.putio.redirect_uri}
                 />
               </label>
+              <div className="browser-panel">
+                <div className="section-heading compact-heading">
+                  <h3>Put.io setup</h3>
+                  <span className="small-note">Helper values</span>
+                </div>
+                <div className="location-list">
+                  <a
+                    className="path-chip path-link"
+                    href="https://app.put.io/oauth/new"
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Create new app on Put.io
+                  </a>
+                  <button
+                    className="path-chip"
+                    onClick={() =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        putio: { ...current.putio, redirect_uri: nativeRedirectUri },
+                      }))
+                    }
+                    type="button"
+                  >
+                    Use native callback
+                  </button>
+                  <button
+                    className="path-chip"
+                    onClick={() =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        putio: { ...current.putio, redirect_uri: containerRedirectUri },
+                      }))
+                    }
+                    type="button"
+                  >
+                    Use container callback
+                  </button>
+                </div>
+                <p className="muted-copy">
+                  Put.io does not document query-string prefills for the new app form, so this link can open
+                  the page but not reliably populate its fields for you.
+                </p>
+                <div className="preview-block">
+                  <h3>Suggested Put.io app values</h3>
+                  <ul>
+                    <li>Name: `get-put.io`</li>
+                    <li>Description: `Self-hosted Put.io sync portal for Jellyfin libraries.`</li>
+                    <li>Website for native mode: `http://localhost:5173`</li>
+                    <li>Callback for native mode: `http://localhost:8000/api/auth/putio/callback`</li>
+                    <li>Callback for Docker/container mode: `http://localhost:8787/api/auth/putio/callback`</li>
+                  </ul>
+                </div>
+              </div>
               <div className="inline-actions">
                 <button className="primary-button" disabled={settingsSaving} type="submit">
                   {settingsSaving ? "Saving..." : "Save integration settings"}
@@ -488,8 +562,31 @@ export default function App() {
               <p className="muted-copy">
                 {dashboard.putio_connected
                   ? `Connected as ${dashboard.settings.putio.account_username ?? "Put.io user"}.`
-                  : "Create a Put.io app, save the credentials here, then start the browser login."}
+                  : "Create a Put.io app, save the client ID and secret here, then start the browser login."}
               </p>
+              <div className="preview-block">
+                <h3>Manual token fallback</h3>
+                <p>
+                  If you prefer, you can paste the OAuth token from Put.io's Secrets page instead of doing the
+                  browser login flow.
+                </p>
+                <div className="manual-token-row">
+                  <input
+                    onChange={(event) => setManualToken(event.target.value)}
+                    placeholder="Paste Put.io OAuth token"
+                    type="password"
+                    value={manualToken}
+                  />
+                  <button
+                    className="ghost-button small-button"
+                    disabled={manualTokenSaving || !manualToken.trim()}
+                    onClick={() => void handleSaveManualToken()}
+                    type="button"
+                  >
+                    {manualTokenSaving ? "Saving..." : "Use token"}
+                  </button>
+                </div>
+              </div>
             </form>
           </article>
 

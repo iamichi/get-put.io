@@ -81,6 +81,14 @@ class PutioService:
         username = info.json().get("info", {}).get("username")
         return user_id, username
 
+    @staticmethod
+    def manual_token(token_value: str) -> PutioToken:
+        return PutioToken(
+            access_token=token_value.strip(),
+            token_type="Bearer",
+            expiry="0001-01-01T00:00:00Z",
+        )
+
     def list_folders(self, parent_id: int = 0, base_path: str = "/") -> list[FolderNode]:
         token = self.state.settings.putio.token
         if token is None:

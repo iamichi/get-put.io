@@ -11,6 +11,7 @@ from app.api.schemas import (
     JellyfinTestResponse,
     JobDetailResponse,
     JobsResponse,
+    PutioManualTokenRequest,
     PutioBrowserResponse,
     SaveScheduleRequest,
     SaveSettingsRequest,
@@ -237,6 +238,32 @@ def disconnect_putio(store: StateStore = Depends(state_store_dependency)) -> Set
         state.settings.putio.connected_at = None
         state.settings.putio.oauth_state = None
         return state
+
+    state = store.mutate(mutate)
+    return SettingsResponse(settings=state.settings)
+
+
+@router.post("/auth/putio/manual-token", response_model=SettingsResponse)
+def save_putio_manual_token(
+    payload: PutioManualTokenRequest,
+    settings: Settings = Depends(settings_dependency),
+    store: StateStore = Depends(state_store_dependency),
+) -> SettingsResponse:
+    current = store.snapshot()
+    service = PutioService(settings, current)
+    token = service.manual_token(payload.oauth_token)
+    try:
+        user_id, username = service.fetch_account(token)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid Put.io token: {exc}") from exc
+
+    def mutate(state_model: AppState) -> AppState:
+        state_model.settings.putio.token = token
+        state_model.settings.putio.account_user_id = user_id
+        state_model.settings.putio.account_username = username
+        state_model.settings.putio.connected_at = utc_now()
+        state_model.settings.putio.oauth_state = None
+        return state_model
 
     state = store.mutate(mutate)
     return SettingsResponse(settings=state.settings)

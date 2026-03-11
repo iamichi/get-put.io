@@ -106,6 +106,10 @@ class AuthStartResponse(BaseModel):
     auth_url: str
 
 
+class PutioManualTokenRequest(BaseModel):
+    oauth_token: str = Field(..., min_length=1)
+
+
 class SettingsResponse(BaseModel):
     settings: AppSettings
 

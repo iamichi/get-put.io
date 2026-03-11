@@ -312,6 +312,19 @@ export async function disconnectPutio(): Promise<void> {
   }
 }
 
+export async function savePutioManualToken(oauthToken: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/auth/putio/manual-token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ oauth_token: oauthToken }),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+}
+
 export async function testJellyfin(): Promise<string> {
   const response = await fetch(`${API_BASE_URL}/api/jellyfin/test`, {
     method: "POST",

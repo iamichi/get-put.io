@@ -466,6 +466,10 @@ code,
     background 180ms ease;
 }
 
+.path-link {
+  text-decoration: none;
+}
+
 .breadcrumb-chip:hover,
 .path-chip:hover {
   transform: translateY(-1px);
@@ -478,6 +482,28 @@ code,
   padding: 0.9rem 1rem;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.03);
+}
+
+.manual-token-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+
+.manual-token-row input {
+  flex: 1;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(1, 8, 13, 0.45);
+  color: var(--text);
+  padding: 0.95rem 1rem;
+  outline: none;
+}
+
+.manual-token-row input:focus {
+  border-color: rgba(166, 244, 197, 0.48);
+  box-shadow: 0 0 0 4px rgba(166, 244, 197, 0.08);
 }
 
 .preview-panel code {

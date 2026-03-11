@@ -181,6 +181,8 @@ Important variables:
 5. Save recurring jobs for your common sync lanes if you want hands-off imports.
 6. Trigger a Jellyfin refresh after successful jobs if enabled.
 
+If the browser OAuth flow is inconvenient, you can also paste the OAuth token shown on your Put.io app's Secrets page into the UI as a manual fallback.
+
 ## Next steps
 
 - add scheduling and recurring jobs
