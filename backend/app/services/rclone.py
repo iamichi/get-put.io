@@ -26,6 +26,10 @@ class RcloneService:
             warnings.append(
                 "Destination matches the primary library root. Consider a staging directory first."
             )
+        if payload.deletion_policy == "mirror_remote":
+            warnings.append(
+                "Mirror mode will delete local files that no longer exist in Put.io."
+            )
         if payload.mode == "folder" and not payload.folder_path:
             warnings.append("Folder mode needs a Put.io folder path.")
         if self.state.settings.putio.token is None:
@@ -59,7 +63,11 @@ class RcloneService:
             command_parts=command_parts,
             steps=[
                 "Resolve the selected Put.io scope into an rclone remote path.",
-                "Copy files into the selected local destination.",
+                (
+                    "Mirror the Put.io scope into the selected local destination, deleting missing local files."
+                    if payload.deletion_policy == "mirror_remote"
+                    else "Copy files into the selected local destination."
+                ),
                 "Stream progress into the job log while rclone runs.",
                 "Trigger a Jellyfin refresh after the transfer succeeds if enabled.",
             ],
@@ -69,9 +77,10 @@ class RcloneService:
     def build_command(self, payload: SyncPreviewRequest) -> list[str]:
         remote_path = self._remote_path(payload)
         destination = str(Path(payload.destination_path).expanduser())
+        verb = "sync" if payload.deletion_policy == "mirror_remote" else "copy"
         return [
             self.settings.rclone_binary,
-            "copy",
+            verb,
             remote_path,
             destination,
             "--create-empty-src-dirs",

@@ -36,7 +36,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -224,7 +225,7 @@ code,
 
 .tab-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.9rem;
   margin-top: 1.2rem;
 }
@@ -473,7 +474,8 @@ code,
   border-color: rgba(63, 208, 201, 0.34);
 }
 
-.sync-form input {
+.sync-form input,
+.sync-form textarea {
   width: 100%;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.09);
@@ -483,12 +485,14 @@ code,
   outline: none;
 }
 
-.sync-form input:focus {
+.sync-form input:focus,
+.sync-form textarea:focus {
   border-color: rgba(166, 244, 197, 0.48);
   box-shadow: 0 0 0 4px rgba(166, 244, 197, 0.08);
 }
 
-.settings-form input {
+.settings-form input,
+.settings-form textarea {
   width: 100%;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.09);
@@ -498,7 +502,8 @@ code,
   outline: none;
 }
 
-.settings-form input:focus {
+.settings-form input:focus,
+.settings-form textarea:focus {
   border-color: rgba(166, 244, 197, 0.48);
   box-shadow: 0 0 0 4px rgba(166, 244, 197, 0.08);
 }

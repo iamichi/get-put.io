@@ -106,6 +106,7 @@ class JobService:
             mode=payload.mode,
             folder_path=payload.folder_path,
             destination_path=payload.destination_path,
+            deletion_policy=payload.deletion_policy,
             command_preview=preview.command_preview,
             status="queued",
             warnings=preview.warnings,

@@ -6,6 +6,10 @@ from fastapi.responses import HTMLResponse
 from app.api.schemas import (
     AppMetaResponse,
     AuthStartResponse,
+    CleanupPreviewResponse,
+    CleanupRunResponse,
+    CleanupRunsResponse,
+    CleanupScheduleStatusResponse,
     DashboardResponse,
     HealthResponse,
     JellyfinLibrariesResponse,
@@ -31,6 +35,7 @@ from app.services.paths import normalize_destination_path
 from app.services.putio import PutioService
 from app.services.scheduler import SchedulerService, get_scheduler_service
 from app.services.state import StateStore, get_state_store
+from app.services.storage_cleanup import StorageCleanupService
 from app.models.state import utc_now
 
 router = APIRouter(prefix="/api")
@@ -55,6 +60,18 @@ def redact_settings(settings_model):
     safe_settings.putio.oauth_state = None
     safe_settings.jellyfin.api_key = ""
     return safe_settings
+
+
+def validate_cleanup_settings(settings: Settings, payload_settings) -> None:
+    cleanup = payload_settings.storage_cleanup
+    if cleanup.target_free_percent <= cleanup.threshold_free_percent:
+        raise ValueError("Cleanup target free space must be greater than the cleanup threshold.")
+    normalized_excludes: list[str] = []
+    for path in cleanup.exclude_paths:
+        if not path.strip():
+            continue
+        normalized_excludes.append(normalize_destination_path(settings, path))
+    cleanup.exclude_paths = list(dict.fromkeys(normalized_excludes))
 
 
 def settings_dependency() -> Settings:
@@ -124,6 +141,7 @@ def dashboard(
                 "label": job.label,
                 "mode": job.mode,
                 "target_path": job.destination_path,
+                "deletion_policy": job.deletion_policy,
                 "status": job.status,
                 "last_run": job.finished_at or job.started_at or job.created_at,
                 "refresh_triggered": job.refresh_triggered,
@@ -133,6 +151,13 @@ def dashboard(
         schedules=[
             ScheduleResponse.model_validate(schedule.model_dump())
             for schedule in get_scheduler_service().list_schedules()
+        ],
+        cleanup_schedule=CleanupScheduleStatusResponse.model_validate(
+            state.cleanup_schedule.model_dump()
+        ),
+        cleanup_runs=[
+            CleanupRunResponse.model_validate(run.model_dump())
+            for run in state.latest_cleanup_runs(limit=10)
         ],
         putio_connected=state.settings.putio.token is not None,
         jellyfin_enabled=state.settings.jellyfin.enabled,
@@ -173,6 +198,7 @@ def save_settings(
     payload: SaveSettingsRequest,
     settings: Settings = Depends(settings_dependency),
     store: StateStore = Depends(state_store_dependency),
+    scheduler: SchedulerService = Depends(scheduler_dependency),
 ) -> SettingsResponse:
     try:
         if payload.settings.jellyfin.base_url:
@@ -182,6 +208,7 @@ def save_settings(
                 settings,
                 payload.settings.sync_defaults.destination_path,
             )
+        validate_cleanup_settings(settings, payload.settings)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -200,6 +227,7 @@ def save_settings(
         return state
 
     state = store.mutate(mutate)
+    scheduler.refresh_cleanup_schedule()
     return SettingsResponse(settings=redact_settings(state.settings))
 
 
@@ -349,6 +377,32 @@ def run_job(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return JobDetailResponse.model_validate(job.model_dump())
+
+
+@router.get("/storage/cleanup/preview", response_model=CleanupPreviewResponse)
+def preview_cleanup(
+    settings: Settings = Depends(settings_dependency),
+    store: StateStore = Depends(state_store_dependency),
+) -> CleanupPreviewResponse:
+    return StorageCleanupService(settings, store).preview()
+
+
+@router.post("/storage/cleanup/run", response_model=CleanupRunResponse)
+def run_cleanup(
+    settings: Settings = Depends(settings_dependency),
+    store: StateStore = Depends(state_store_dependency),
+) -> CleanupRunResponse:
+    run = StorageCleanupService(settings, store).start_run(triggered_by="manual")
+    return CleanupRunResponse.model_validate(run.model_dump())
+
+
+@router.get("/storage/cleanup/runs", response_model=CleanupRunsResponse)
+def list_cleanup_runs(
+    settings: Settings = Depends(settings_dependency),
+    store: StateStore = Depends(state_store_dependency),
+) -> CleanupRunsResponse:
+    runs = StorageCleanupService(settings, store).list_runs()
+    return CleanupRunsResponse(runs=[CleanupRunResponse.model_validate(run.model_dump()) for run in runs])
 
 
 @router.get("/schedules", response_model=SchedulesResponse)

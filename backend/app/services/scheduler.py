@@ -12,6 +12,7 @@ from app.config import Settings, get_settings
 from app.models.state import AppState, RecurringSchedule, utc_now
 from app.services.jobs import JobService
 from app.services.paths import normalize_destination_path
+from app.services.storage_cleanup import StorageCleanupService
 from app.services.state import StateStore, get_state_store
 
 
@@ -45,6 +46,7 @@ class SchedulerService:
         mode: str,
         folder_path: str | None,
         destination_path: str,
+        deletion_policy: str,
         schedule_type: str,
         interval_hours: int,
         daily_time: str,
@@ -57,6 +59,7 @@ class SchedulerService:
             mode=mode,
             folder_path=folder_path,
             destination_path=normalized_destination,
+            deletion_policy=deletion_policy,
             schedule_type=schedule_type,
             interval_hours=interval_hours,
             daily_time=daily_time,
@@ -73,6 +76,7 @@ class SchedulerService:
         mode: str,
         folder_path: str | None,
         destination_path: str,
+        deletion_policy: str,
         schedule_type: str,
         interval_hours: int,
         daily_time: str,
@@ -89,6 +93,7 @@ class SchedulerService:
             updated.mode = mode  # type: ignore[assignment]
             updated.folder_path = folder_path
             updated.destination_path = normalized_destination
+            updated.deletion_policy = deletion_policy  # type: ignore[assignment]
             updated.schedule_type = schedule_type  # type: ignore[assignment]
             updated.interval_hours = interval_hours
             updated.daily_time = daily_time
@@ -112,6 +117,7 @@ class SchedulerService:
             mode=schedule.mode,
             folder_path=schedule.folder_path,
             destination_path=schedule.destination_path,
+            deletion_policy=schedule.deletion_policy,
         )
         job = JobService(self.settings, self.state_store).start_job(
             payload,
@@ -133,6 +139,7 @@ class SchedulerService:
         self.state_store.mutate(mutate)
 
     def start(self) -> None:
+        self.refresh_cleanup_schedule()
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
@@ -158,6 +165,7 @@ class SchedulerService:
                     except Exception:
                         logger.exception("Failed to trigger schedule %s", schedule.id)
                         continue
+                self._run_due_cleanup()
             finally:
                 self._stop_event.wait(self.settings.scheduler_poll_seconds)
 
@@ -173,22 +181,79 @@ class SchedulerService:
             claimed.append(schedule.model_copy(deep=True))
         return claimed
 
+    def refresh_cleanup_schedule(self) -> None:
+        def mutate(state: AppState) -> None:
+            cleanup = state.settings.storage_cleanup
+            if not cleanup.enabled or not cleanup.schedule_enabled:
+                state.cleanup_schedule.next_run_at = None
+                return
+            state.cleanup_schedule.next_run_at = self.compute_next_run_from_parts(
+                schedule_type=cleanup.schedule_type,
+                interval_hours=cleanup.interval_hours,
+                daily_time=cleanup.daily_time,
+            ).isoformat()
+
+        self.state_store.mutate(mutate)
+
+    def _run_due_cleanup(self) -> None:
+        snapshot = self.state_store.snapshot()
+        next_run_at = snapshot.cleanup_schedule.next_run_at
+        if not next_run_at:
+            return
+        if _parse_iso(next_run_at) > datetime.now(timezone.utc):
+            return
+
+        service = StorageCleanupService(self.settings, self.state_store)
+        cleanup = snapshot.settings.storage_cleanup
+        should_run = service.should_run_scheduled_cleanup(snapshot)
+        next_run = self.compute_next_run_from_parts(
+            schedule_type=cleanup.schedule_type,
+            interval_hours=cleanup.interval_hours,
+            daily_time=cleanup.daily_time,
+        ).isoformat()
+        if should_run:
+            run = service.start_run(triggered_by="schedule")
+
+            def mutate(state: AppState) -> None:
+                state.cleanup_schedule.next_run_at = next_run
+                state.cleanup_schedule.last_job_id = run.id
+                state.touch()
+
+            self.state_store.mutate(mutate)
+            return
+
+        def mutate(state: AppState) -> None:
+            state.cleanup_schedule.next_run_at = next_run
+            state.touch()
+
+        self.state_store.mutate(mutate)
+
     def compute_next_run(
         self,
         schedule: RecurringSchedule,
         from_utc: datetime | None = None,
     ) -> datetime:
-        anchor = (from_utc or datetime.now(timezone.utc)).astimezone(ZoneInfo(self.settings.schedule_timezone))
-        if schedule.schedule_type == "interval":
-            return (anchor + timedelta(hours=max(schedule.interval_hours, 1))).astimezone(timezone.utc)
-
-        hour_text, minute_text = schedule.daily_time.split(":", maxsplit=1)
-        candidate = anchor.replace(
-            hour=int(hour_text),
-            minute=int(minute_text),
-            second=0,
-            microsecond=0,
+        return self.compute_next_run_from_parts(
+            schedule_type=schedule.schedule_type,
+            interval_hours=schedule.interval_hours,
+            daily_time=schedule.daily_time,
+            from_utc=from_utc,
         )
+
+    def compute_next_run_from_parts(
+        self,
+        *,
+        schedule_type: str,
+        interval_hours: int,
+        daily_time: str,
+        from_utc: datetime | None = None,
+    ) -> datetime:
+        anchor = (from_utc or datetime.now(timezone.utc)).astimezone(ZoneInfo(self.settings.schedule_timezone))
+        if schedule_type == "interval":
+            return (anchor + timedelta(hours=max(interval_hours, 1))).astimezone(timezone.utc)
+
+        hour_text, minute_text = daily_time.split(":", maxsplit=1)
+        candidate = anchor.replace(hour=int(hour_text), minute=int(minute_text), second=0, microsecond=0)
         if candidate <= anchor:
             candidate += timedelta(days=1)
         return candidate.astimezone(timezone.utc)

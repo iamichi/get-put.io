@@ -41,12 +41,26 @@ class JellyfinSettings(BaseModel):
 
 class SyncDefaults(BaseModel):
     destination_path: str = ""
+    deletion_policy: Literal["keep_local", "mirror_remote"] = "keep_local"
+
+
+class StorageCleanupSettings(BaseModel):
+    enabled: bool = False
+    threshold_free_percent: int = 15
+    target_free_percent: int = 25
+    min_age_days: int = 30
+    exclude_paths: list[str] = Field(default_factory=list)
+    schedule_enabled: bool = False
+    schedule_type: Literal["interval", "daily"] = "daily"
+    interval_hours: int = 24
+    daily_time: str = "04:00"
 
 
 class AppSettings(BaseModel):
     putio: PutioSettings = Field(default_factory=PutioSettings)
     jellyfin: JellyfinSettings = Field(default_factory=JellyfinSettings)
     sync_defaults: SyncDefaults = Field(default_factory=SyncDefaults)
+    storage_cleanup: StorageCleanupSettings = Field(default_factory=StorageCleanupSettings)
 
 
 class SyncJobRecord(BaseModel):
@@ -55,6 +69,7 @@ class SyncJobRecord(BaseModel):
     mode: Literal["all", "folder"]
     folder_path: str | None = None
     destination_path: str
+    deletion_policy: Literal["keep_local", "mirror_remote"] = "keep_local"
     command_preview: str
     status: Literal["queued", "running", "completed", "failed", "cancelled"]
     created_at: str = Field(default_factory=utc_now)
@@ -77,6 +92,7 @@ class RecurringSchedule(BaseModel):
     mode: Literal["all", "folder"]
     folder_path: str | None = None
     destination_path: str
+    deletion_policy: Literal["keep_local", "mirror_remote"] = "keep_local"
     schedule_type: Literal["interval", "daily"] = "interval"
     interval_hours: int = 6
     daily_time: str = "03:00"
@@ -91,6 +107,8 @@ class AppState(BaseModel):
     settings: AppSettings = Field(default_factory=AppSettings)
     jobs: list[SyncJobRecord] = Field(default_factory=list)
     schedules: list[RecurringSchedule] = Field(default_factory=list)
+    cleanup_runs: list["CleanupRunRecord"] = Field(default_factory=list)
+    cleanup_schedule: "CleanupScheduleState" = Field(default_factory=lambda: CleanupScheduleState())
     updated_at: str = Field(default_factory=utc_now)
 
     @classmethod
@@ -143,3 +161,38 @@ class AppState(BaseModel):
     def delete_schedule(self, schedule_id: str) -> None:
         self.schedules = [schedule for schedule in self.schedules if schedule.id != schedule_id]
         self.touch()
+
+    def latest_cleanup_runs(self, limit: int = 10) -> list["CleanupRunRecord"]:
+        return list(reversed(self.cleanup_runs[-limit:]))
+
+    def get_cleanup_run(self, run_id: str) -> "CleanupRunRecord" | None:
+        for run in self.cleanup_runs:
+            if run.id == run_id:
+                return run
+        return None
+
+    def append_cleanup_run(self, run: "CleanupRunRecord") -> None:
+        self.cleanup_runs.append(run)
+        self.touch()
+
+
+class CleanupScheduleState(BaseModel):
+    next_run_at: str | None = None
+    last_run_at: str | None = None
+    last_job_id: str | None = None
+
+
+class CleanupRunRecord(BaseModel):
+    id: str
+    label: str = "Storage cleanup"
+    status: Literal["queued", "running", "completed", "failed", "cancelled"]
+    started_at: str | None = None
+    finished_at: str | None = None
+    log_lines: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+    deleted_files: int = 0
+    reclaimed_bytes: int = 0
+    free_percent_before: float = 0
+    free_percent_after: float | None = None
+    triggered_by: Literal["manual", "schedule"] = "manual"
+    created_at: str = Field(default_factory=utc_now)

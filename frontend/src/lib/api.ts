@@ -28,6 +28,7 @@ export type JobSummary = {
   label: string;
   mode: "all" | "folder";
   target_path: string;
+  deletion_policy: "keep_local" | "mirror_remote";
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
   last_run: string;
   refresh_triggered: boolean;
@@ -40,6 +41,7 @@ export type RecurringSchedule = {
   mode: "all" | "folder";
   folder_path?: string | null;
   destination_path: string;
+  deletion_policy: "keep_local" | "mirror_remote";
   schedule_type: "interval" | "daily";
   interval_hours: number;
   daily_time: string;
@@ -79,12 +81,60 @@ export type JellyfinSettings = {
 
 export type SyncDefaults = {
   destination_path: string;
+  deletion_policy: "keep_local" | "mirror_remote";
+};
+
+export type StorageCleanupSettings = {
+  enabled: boolean;
+  threshold_free_percent: number;
+  target_free_percent: number;
+  min_age_days: number;
+  exclude_paths: string[];
+  schedule_enabled: boolean;
+  schedule_type: "interval" | "daily";
+  interval_hours: number;
+  daily_time: string;
 };
 
 export type AppSettings = {
   putio: PutioSettings;
   jellyfin: JellyfinSettings;
   sync_defaults: SyncDefaults;
+  storage_cleanup: StorageCleanupSettings;
+};
+
+export type CleanupScheduleStatus = {
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  last_job_id?: string | null;
+};
+
+export type CleanupRun = {
+  id: string;
+  label: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  started_at?: string | null;
+  finished_at?: string | null;
+  log_lines: string[];
+  error_message?: string | null;
+  deleted_files: number;
+  reclaimed_bytes: number;
+  free_percent_before: number;
+  free_percent_after?: number | null;
+  triggered_by: "manual" | "schedule";
+  created_at: string;
+};
+
+export type CleanupPreview = {
+  would_run: boolean;
+  free_percent: number;
+  threshold_free_percent: number;
+  target_free_percent: number;
+  estimated_files_to_delete: number;
+  estimated_bytes_reclaimed: number;
+  candidate_count: number;
+  sample_paths: string[];
+  summary: string;
 };
 
 export type DashboardResponse = {
@@ -98,6 +148,8 @@ export type DashboardResponse = {
   destinations: string[];
   jobs: JobSummary[];
   schedules: RecurringSchedule[];
+  cleanup_schedule: CleanupScheduleStatus;
+  cleanup_runs: CleanupRun[];
   putio_connected: boolean;
   jellyfin_enabled: boolean;
 };
@@ -116,6 +168,7 @@ export type JobDetail = {
   mode: "all" | "folder";
   folder_path?: string | null;
   destination_path: string;
+  deletion_policy: "keep_local" | "mirror_remote";
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
   created_at: string;
   started_at?: string | null;
@@ -168,6 +221,7 @@ export async function previewSync(payload: {
   mode: "all" | "folder";
   folder_path?: string;
   destination_path: string;
+  deletion_policy: "keep_local" | "mirror_remote";
 }): Promise<SyncPreviewResponse> {
   const response = await fetch(`${API_BASE_URL}/api/jobs/preview`, {
     method: "POST",
@@ -197,6 +251,7 @@ export async function runSync(payload: {
   mode: "all" | "folder";
   folder_path?: string;
   destination_path: string;
+  deletion_policy: "keep_local" | "mirror_remote";
 }): Promise<JobDetail> {
   const response = await fetch(`${API_BASE_URL}/api/jobs/run`, {
     method: "POST",
@@ -287,6 +342,33 @@ export async function fetchJobs(): Promise<JobDetail[]> {
   }
   const payload = await response.json();
   return payload.jobs;
+}
+
+export async function previewCleanup(): Promise<CleanupPreview> {
+  const response = await fetch(`${API_BASE_URL}/api/storage/cleanup/preview`);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function runCleanup(): Promise<CleanupRun> {
+  const response = await fetch(`${API_BASE_URL}/api/storage/cleanup/run`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function fetchCleanupRuns(): Promise<CleanupRun[]> {
+  const response = await fetch(`${API_BASE_URL}/api/storage/cleanup/runs`);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  const payload = await response.json();
+  return payload.runs;
 }
 
 export async function saveSettings(settings: AppSettings): Promise<AppSettings> {

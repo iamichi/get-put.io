@@ -8,6 +8,7 @@ from app.main import app, resolve_static_asset
 from app.models.state import PutioToken, SyncJobRecord, utc_now
 from app.services.jobs import JobService
 from app.services.putio import PutioService
+from app.services.storage_cleanup import StorageCleanupService
 from app.services.scheduler import get_scheduler_service
 from app.services.state import get_state_store
 
@@ -52,6 +53,18 @@ def test_settings_round_trip_and_preview(monkeypatch, tmp_path: Path) -> None:
                 },
                 "sync_defaults": {
                     "destination_path": "/media/staging",
+                    "deletion_policy": "keep_local",
+                },
+                "storage_cleanup": {
+                    "enabled": False,
+                    "threshold_free_percent": 15,
+                    "target_free_percent": 25,
+                    "min_age_days": 30,
+                    "exclude_paths": [],
+                    "schedule_enabled": False,
+                    "schedule_type": "daily",
+                    "interval_hours": 24,
+                    "daily_time": "04:00",
                 },
             }
         },
@@ -139,6 +152,18 @@ def test_settings_save_preserves_putio_managed_fields(monkeypatch, tmp_path: Pat
                 },
                 "sync_defaults": {
                     "destination_path": "",
+                    "deletion_policy": "keep_local",
+                },
+                "storage_cleanup": {
+                    "enabled": False,
+                    "threshold_free_percent": 15,
+                    "target_free_percent": 25,
+                    "min_age_days": 30,
+                    "exclude_paths": [],
+                    "schedule_enabled": False,
+                    "schedule_type": "daily",
+                    "interval_hours": 24,
+                    "daily_time": "04:00",
                 },
             }
         },
@@ -304,6 +329,18 @@ def test_save_settings_rejects_unsafe_jellyfin_url(monkeypatch, tmp_path: Path) 
                 },
                 "sync_defaults": {
                     "destination_path": "",
+                    "deletion_policy": "keep_local",
+                },
+                "storage_cleanup": {
+                    "enabled": False,
+                    "threshold_free_percent": 15,
+                    "target_free_percent": 25,
+                    "min_age_days": 30,
+                    "exclude_paths": [],
+                    "schedule_enabled": False,
+                    "schedule_type": "daily",
+                    "interval_hours": 24,
+                    "daily_time": "04:00",
                 },
             }
         },
@@ -311,6 +348,99 @@ def test_save_settings_rejects_unsafe_jellyfin_url(monkeypatch, tmp_path: Path) 
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Jellyfin URL must point to a unicast host."
+
+
+def test_settings_reject_cleanup_target_below_threshold(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GET_PUTIO_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setenv("GET_PUTIO_STORAGE_PATH", str(tmp_path / "media"))
+    get_settings.cache_clear()
+    get_state_store.cache_clear()
+    get_scheduler_service.cache_clear()
+
+    client = TestClient(app)
+    response = client.put(
+        "/api/settings",
+        json={
+            "settings": {
+                "putio": {
+                    "app_id": "",
+                    "client_secret": "",
+                    "redirect_uri": "http://localhost:8000/api/auth/putio/callback",
+                    "token": None,
+                    "oauth_state": None,
+                    "account_username": None,
+                    "account_user_id": None,
+                    "connected_at": None,
+                },
+                "jellyfin": {
+                    "enabled": False,
+                    "base_url": "",
+                    "api_key": "",
+                    "refresh_after_sync": True,
+                    "refresh_only_on_change": True,
+                    "selected_library_ids": [],
+                },
+                "sync_defaults": {
+                    "destination_path": "",
+                    "deletion_policy": "keep_local",
+                },
+                "storage_cleanup": {
+                    "enabled": True,
+                    "threshold_free_percent": 25,
+                    "target_free_percent": 20,
+                    "min_age_days": 30,
+                    "exclude_paths": [],
+                    "schedule_enabled": False,
+                    "schedule_type": "daily",
+                    "interval_hours": 24,
+                    "daily_time": "04:00",
+                },
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Cleanup target free space must be greater than the cleanup threshold."
+
+
+def test_cleanup_preview_respects_cleanup_policy(monkeypatch, tmp_path: Path) -> None:
+    storage_root = tmp_path / "media"
+    library = storage_root / "library"
+    library.mkdir(parents=True)
+    old_file = library / "old.mkv"
+    old_file.write_bytes(b"x" * 32)
+
+    monkeypatch.setenv("GET_PUTIO_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setenv("GET_PUTIO_STORAGE_PATH", str(storage_root))
+    get_settings.cache_clear()
+    get_state_store.cache_clear()
+    get_scheduler_service.cache_clear()
+
+    def fake_disk_usage(_: Path) -> tuple[int, int, int]:
+        return (100, 90, 10)
+
+    monkeypatch.setattr(StorageCleanupService, "_disk_usage", staticmethod(fake_disk_usage))
+
+    store = get_state_store()
+
+    def seed_cleanup_settings(state) -> None:
+        state.settings.storage_cleanup.enabled = True
+        state.settings.storage_cleanup.threshold_free_percent = 15
+        state.settings.storage_cleanup.target_free_percent = 25
+        state.settings.storage_cleanup.min_age_days = 0
+        state.settings.storage_cleanup.exclude_paths = []
+
+    store.mutate(seed_cleanup_settings)
+
+    client = TestClient(app)
+    response = client.get("/api/storage/cleanup/preview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["would_run"] is True
+    assert payload["estimated_files_to_delete"] == 1
+    assert payload["candidate_count"] == 1
+    assert payload["sample_paths"] == [str(old_file.resolve())]
 
 
 def test_resolve_static_asset_rejects_traversal(tmp_path: Path) -> None:
@@ -406,6 +536,7 @@ def test_scheduler_claim_does_not_advance_next_run(monkeypatch, tmp_path: Path) 
         mode="folder",
         folder_path="/Movies",
         destination_path="/media/staging",
+        deletion_policy="keep_local",
         schedule_type="daily",
         interval_hours=6,
         daily_time="02:30",

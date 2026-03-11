@@ -1,159 +1,30 @@
 # get-put.io
 
-`get-put.io` is a self-hosted sync portal for pulling media from Put.io into local storage that Jellyfin can index. The first version focuses on a clean operator workflow: connect Put.io, choose `all files` or a specific folder, pick a destination path, run or schedule transfers, and trigger a Jellyfin library refresh.
+`get-put.io` is a self-hosted web app for pulling media from Put.io into local storage and refreshing Jellyfin after successful syncs. It supports:
 
-## Why this shape
+- Put.io OAuth or manual token entry
+- syncing all of Put.io or a specific folder
+- recurring sync schedules
+- two sync deletion policies:
+  - `Keep local files`
+  - `Mirror Put.io deletions`
+- optional local storage cleanup when free space gets low
 
-This project intentionally starts as an external service instead of a Jellyfin plugin:
-- Put.io auth and transfer logic fit better in a standalone app than inside Jellyfin's plugin lifecycle.
-- `rclone` already provides a battle-tested Put.io backend, resumable transfers, and folder-scoped copy/sync.
-- Jellyfin can be refreshed through its HTTP API, so the app does not need to live inside the media server.
-- Proxmox LXC keeps the deployment lightweight while still giving you isolation and snapshot-friendly operations.
+## Install options
 
-## Stack
+You can run `get-put.io` in three practical ways:
 
-- Backend: FastAPI
-- Frontend: React + Vite + TypeScript
-- Transfer engine: `rclone`
-- Media server integration: Jellyfin HTTP API
-- Deployment: Docker Compose, with a Proxmox LXC bootstrap script
-- Local development: native macOS or Linux
+- Proxmox LXC
+- containers on macOS or Linux
+- directly on the local host
 
-## Repo layout
-
-```text
-.
-├── README.md
-├── LICENSE
-├── Makefile
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
-├── backend/
-│   ├── pyproject.toml
-│   ├── app/
-│   └── tests/
-├── frontend/
-│   ├── package.json
-│   └── src/
-├── scripts/
-│   ├── macos/
-│   └── proxmox/
-└── docs/
-```
-
-## Current scaffold status
-
-This initial repo includes:
-- a FastAPI backend with persisted settings, Put.io OAuth, runnable `rclone` jobs, and a Jellyfin refresh hook
-- a polished frontend shell for integration setup, nested Put.io folder browsing, library-aware destination choices, sync previews, and live job logs
-- a single-image Docker build that packages the built frontend with the backend
-- a Proxmox LXC creation script plus macOS native and Apple container launch scripts
-
-What is still stubbed:
-- cancellation, retries, and richer transfer metrics
-- multi-user auth and permissions
-
-## License
-
-MIT. See [LICENSE](/private/tmp/get-putio-main-license/LICENSE).
-
-## Quick start: native development
-
-### Backend
-
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-uvicorn app.main:app --reload --port 8000
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-The frontend expects the backend at `http://localhost:8000` by default.
-
-For real sync jobs on macOS, install `rclone` too:
-
-```bash
-brew install rclone
-```
-
-## Quick start: macOS helper
-
-If you want the native two-process workflow on macOS, use:
-
-```bash
-./scripts/macos/dev.sh
-```
-
-This script creates a Python virtualenv if needed, installs backend dependencies, and starts both the API and Vite dev server.
-
-## macOS containers
-
-This repo supports macOS without containers, which is the default recommendation for local development. If you prefer containers on macOS, use a broadly supported runtime such as Docker Desktop, OrbStack, or Colima.
-
-Apple's `container` CLI can also run this project if you are on Apple silicon with macOS 26 and have installed the tool and started its system service.
-
-Quick path:
-
-```bash
-cp .env.example .env
-./scripts/macos/run-apple-container.sh
-```
-
-That script:
-- builds the image from this repo's `Dockerfile`
-- mounts `./data/app` into `/app/data`
-- mounts `./data/media` into `/media`
-- publishes the app on `http://127.0.0.1:8787`
-
-Manual Apple container flow:
-
-```bash
-container system start
-container build --tag get-putio:local --file ./Dockerfile .
-container run -d \
-  --name get-putio \
-  --publish 127.0.0.1:8787:8000 \
-  --env-file ./.env \
-  --volume "$(pwd)/data/app:/app/data" \
-  --volume "$(pwd)/data/media:/media" \
-  get-putio:local
-```
-
-Official references:
-- [Apple container README](https://github.com/apple/container)
-- [Apple container how-to](https://github.com/apple/container/blob/main/docs/how-to.md)
-- [Apple container command reference](https://github.com/apple/container/blob/main/docs/command-reference.md)
-
-## Quick start: Docker
-
-Copy the example environment file and adjust it:
-
-```bash
-cp .env.example .env
-docker compose up --build
-```
-
-The app will be available at `http://localhost:8787`.
+The default container port is `8787`.
 
 ## Proxmox LXC
 
-The Proxmox bootstrap flow is split into two concerns:
-- create a Debian 12 LXC with the right nesting and mount options
-- install Docker and launch `get-put.io` inside that container
+Run the bootstrap script on a Proxmox host. It creates a Debian 12 LXC, installs Docker in that container, clones this repo, writes `.env`, and starts `get-put.io`.
 
-You can run it directly on a Proxmox host without cloning this repo first.
-
-`CTID` is the Proxmox container ID. It must be a unique numeric ID on that Proxmox node, because `pct` uses it to create and manage the LXC. If `1870` is already in use, pick another unused ID.
+`CTID` is the Proxmox container ID. It must be a unique numeric ID on that Proxmox node because Proxmox uses it to create and manage the LXC. If `1870` is already in use, choose another unused ID.
 
 DHCP example:
 
@@ -175,7 +46,7 @@ GATEWAY='192.168.1.1' \
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/iamichi/get-put.io/main/scripts/proxmox/create-lxc.sh)"
 ```
 
-SSH key example instead of a root password:
+SSH key example:
 
 ```bash
 SSH_PUBLIC_KEY_FILE=/root/.ssh/authorized_keys \
@@ -184,70 +55,231 @@ HOSTNAME=get-putio \
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/iamichi/get-put.io/main/scripts/proxmox/create-lxc.sh)"
 ```
 
-The script is env-driven, not interactive:
-- it does not prompt for an IP address
-- if you leave `IP_CONFIG=dhcp`, it requests DHCP and then tries to detect the assigned container IP automatically
-- if you set `IP_CONFIG` and `GATEWAY`, it uses that static address and derives the app URL from it
-- it now defaults `APP_REPO_URL` to `https://github.com/iamichi/get-put.io.git` and deploys `main` automatically
+Useful optional variables:
 
-Optional useful variables:
 - `PUBLIC_URL=http://192.168.1.50:8787`
 - `MEDIA_SOURCE=/mnt/pve/media`
 - `MEDIA_TARGET=/srv/media`
-- `APP_BRANCH=main`
 - `APP_PORT=8787`
+- `APP_BRANCH=main`
 
-If you prefer to inspect the script first, use:
+When the script finishes it prints:
+
+- the dashboard URL
+- the Put.io callback URL you should register
+
+## Docker Compose
+
+This is the simplest container install outside Proxmox.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iamichi/get-put.io/main/scripts/proxmox/create-lxc.sh -o /root/create-get-putio-lxc.sh
-bash /root/create-get-putio-lxc.sh
+cp .env.example .env
+mkdir -p data/app data/media
+docker compose up -d --build
 ```
 
-If you already cloned the repo locally on the Proxmox host, you can still use:
+Then open [http://localhost:8787](http://localhost:8787).
+
+Persistent data:
+
+- app state: `./data/app`
+- synced media: `./data/media`
+
+If you will open the app from another host or another port, update `FRONTEND_URL` and `PUTIO_REDIRECT_URI` in `.env` before the first Put.io login.
+
+## Apple container CLI
+
+If you use Apple’s `container` CLI on Apple silicon:
 
 ```bash
-./scripts/proxmox/create-lxc.sh
+cp .env.example .env
+./scripts/macos/run-apple-container.sh
 ```
 
-On success, the script prints the app URL and the Put.io redirect URI you should register for OAuth.
+That script:
 
-## Environment variables
+- builds the image from this repo
+- mounts `./data/app` into `/app/data`
+- mounts `./data/media` into `/media`
+- publishes the app on [http://127.0.0.1:8787](http://127.0.0.1:8787)
 
-Important variables:
-- `GET_PUTIO_HOST`
-- `GET_PUTIO_PORT`
+## Local host run
+
+Install these first:
+
+- `python3`
+- `npm`
+- `rclone`
+
+On macOS:
+
+```bash
+brew install rclone
+```
+
+Fastest local start:
+
+```bash
+./scripts/macos/dev.sh
+```
+
+That starts the backend on `http://localhost:8000` and the frontend on `http://localhost:5173`.
+
+If you want to start them manually:
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+uvicorn app.main:app --reload --port 8000
+```
+
+In another terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+## Required configuration
+
+Review `.env.example` before first run.
+
+Important values:
+
 - `FRONTEND_URL`
+- `PUTIO_REDIRECT_URI`
 - `GET_PUTIO_STORAGE_PATH`
 - `GET_PUTIO_STATE_PATH`
 - `GET_PUTIO_SCHEDULE_TIMEZONE`
-- `GET_PUTIO_SCHEDULER_POLL_SECONDS`
-- `RCLONE_BINARY`
+
+Optional bootstrap values:
+
 - `PUTIO_APP_ID`
 - `PUTIO_CLIENT_SECRET`
-- `PUTIO_REDIRECT_URI`
 - `PUTIO_ACCESS_TOKEN`
 - `JELLYFIN_BASE_URL`
 - `JELLYFIN_API_KEY`
 
-`FRONTEND_URL` controls where the Put.io OAuth callback success page sends you after login.
-- Native dev should use `http://localhost:5173`
-- Docker, Apple containers, and single-port deployments should usually use `http://localhost:8787`
+Typical native-host values:
 
-## Recommended v1 workflow
+```dotenv
+FRONTEND_URL=http://localhost:5173
+PUTIO_REDIRECT_URI=http://localhost:8000/api/auth/putio/callback
+GET_PUTIO_STORAGE_PATH=/absolute/path/to/media
+GET_PUTIO_STATE_PATH=/absolute/path/to/state.json
+GET_PUTIO_SCHEDULE_TIMEZONE=Europe/Lisbon
+```
 
-1. Build the app as a standalone control plane.
-2. Create a Put.io OAuth app and set its redirect URI to this service.
-3. Use `rclone` as the transfer layer instead of custom download logic.
-4. Choose a destination path, ideally a staging path or a Jellyfin library mount.
-5. Save recurring jobs for your common sync lanes if you want hands-off imports.
-6. Trigger a Jellyfin refresh after successful jobs if enabled.
+Typical container values:
 
-If the browser OAuth flow is inconvenient, you can also paste the OAuth token shown on your Put.io app's Secrets page into the UI as a manual fallback.
+```dotenv
+FRONTEND_URL=http://localhost:8787
+PUTIO_REDIRECT_URI=http://localhost:8787/api/auth/putio/callback
+GET_PUTIO_STORAGE_PATH=/media
+GET_PUTIO_STATE_PATH=/app/data/state.json
+```
 
-## Next steps
+## Connect Put.io
 
-- add scheduling and recurring jobs
-- persist richer transfer metrics and job history
-- improve Put.io folder browsing and path mapping
-- add cancellation and retry flows
+1. Open the dashboard.
+2. Go to `Put.io`.
+3. Enter your Put.io client ID, client secret, and redirect URI.
+4. Save the settings.
+5. Create the OAuth app in Put.io at [https://app.put.io/oauth/new](https://app.put.io/oauth/new).
+6. Register the callback URL that exactly matches your deployment.
+7. Click `Start Put.io login`.
+
+Common callback URLs:
+
+- native host: `http://localhost:8000/api/auth/putio/callback`
+- default container install: `http://localhost:8787/api/auth/putio/callback`
+- Proxmox or LAN install: `http://<host-or-ip>:8787/api/auth/putio/callback`
+
+If you already have a Put.io OAuth token, you can paste it into the manual token field instead of using the browser login flow.
+
+## Connect Jellyfin
+
+1. Go to `Jellyfin`.
+2. Enable Jellyfin integration.
+3. Enter the Jellyfin base URL and API key.
+4. Test the connection.
+5. Optionally pick Jellyfin library locations to reuse as sync destinations.
+6. Choose whether Jellyfin should refresh after every sync or only when files changed.
+
+Use a normal `http://` or `https://` Jellyfin URL without embedded credentials.
+
+## Use sync
+
+Go to `Sync` and choose:
+
+- `Specific folder`
+- `Everything`
+
+Then set:
+
+- the Put.io path
+- the local destination path
+- the deletion policy
+
+Deletion policies:
+
+- `Keep local files`
+  Local files stay on disk even if they disappear from Put.io.
+- `Mirror Put.io deletions`
+  Local files missing from Put.io are also deleted locally. This is destructive.
+
+Then click `Run sync now`, or save that selection as a recurring job in `Jobs`.
+
+## Use storage cleanup
+
+Go to `Storage` to configure local cleanup separately from Put.io sync mirroring.
+
+Cleanup settings include:
+
+- enable or disable cleanup
+- run when free space drops below a chosen free-space percentage
+- reclaim up to a higher target free-space percentage
+- minimum file age before a file becomes eligible
+- excluded paths
+- optional cleanup schedule
+
+Cleanup behavior:
+
+- cleanup is independent from Put.io deletions
+- it deletes the oldest eligible local files first
+- it only targets files under `GET_PUTIO_STORAGE_PATH`
+- you can preview the cleanup plan before running it
+
+## Use schedules
+
+Go to `Jobs` to manage recurring syncs.
+
+Supported schedule types:
+
+- `daily`
+- `interval`
+
+Rules:
+
+- recurring jobs save the current sync scope, destination, and deletion policy from `Sync`
+- interval schedules run every `1` to `168` hours
+- daily schedules run at the configured `HH:MM` in `GET_PUTIO_SCHEDULE_TIMEZONE`
+- the scheduler checks for due work every `GET_PUTIO_SCHEDULER_POLL_SECONDS` seconds
+
+Cleanup schedules are configured separately in `Storage`.
+
+## Data locations
+
+By default, container installs store:
+
+- state in `./data/app/state.json` on the host
+- media in `./data/media` on the host
+
+The state file contains your saved settings, job history, and schedule state.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

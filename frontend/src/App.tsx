@@ -2,9 +2,12 @@ import { FormEvent, startTransition, useEffect, useRef, useState } from "react";
 import {
   AppSettings,
   cancelJob,
+  CleanupPreview,
+  CleanupRun,
   createSchedule,
   DashboardResponse,
   deleteSchedule,
+  fetchCleanupRuns,
   fetchJellyfinLibraries,
   JobDetail,
   JellyfinLibrary,
@@ -14,6 +17,8 @@ import {
   disconnectPutio,
   fetchDashboard,
   fetchJobs,
+  previewCleanup,
+  runCleanup,
   runSchedule,
   runSync,
   saveSettings,
@@ -24,7 +29,8 @@ import {
 } from "./lib/api";
 
 type SyncMode = "all" | "folder";
-type AppTab = "putio" | "sync" | "jellyfin" | "jobs";
+type DeletionPolicy = "keep_local" | "mirror_remote";
+type AppTab = "putio" | "sync" | "storage" | "jellyfin" | "jobs";
 type ScheduleDraft = Omit<RecurringSchedule, "id" | "next_run_at" | "last_run_at" | "last_job_id">;
 
 const defaultScheduleDraft: ScheduleDraft = {
@@ -33,6 +39,7 @@ const defaultScheduleDraft: ScheduleDraft = {
   mode: "folder",
   folder_path: "/Movies",
   destination_path: "",
+  deletion_policy: "keep_local",
   schedule_type: "daily",
   interval_hours: 6,
   daily_time: "03:00",
@@ -62,6 +69,18 @@ const fallbackDashboard: DashboardResponse = {
     },
     sync_defaults: {
       destination_path: "",
+      deletion_policy: "keep_local",
+    },
+    storage_cleanup: {
+      enabled: false,
+      threshold_free_percent: 15,
+      target_free_percent: 25,
+      min_age_days: 30,
+      exclude_paths: [],
+      schedule_enabled: false,
+      schedule_type: "daily",
+      interval_hours: 24,
+      daily_time: "04:00",
     },
   },
   connections: [],
@@ -76,6 +95,12 @@ const fallbackDashboard: DashboardResponse = {
   destinations: [],
   jobs: [],
   schedules: [],
+  cleanup_schedule: {
+    next_run_at: null,
+    last_run_at: null,
+    last_job_id: null,
+  },
+  cleanup_runs: [],
   putio_connected: false,
   jellyfin_enabled: false,
 };
@@ -91,6 +116,7 @@ export default function App() {
   const [mode, setMode] = useState<SyncMode>("folder");
   const [folderPath, setFolderPath] = useState("/Movies");
   const [destination, setDestination] = useState("");
+  const [deletionPolicy, setDeletionPolicy] = useState<DeletionPolicy>("keep_local");
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(fallbackDashboard.settings);
   const [settingsSaved, setSettingsSaved] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -107,6 +133,9 @@ export default function App() {
   const [scheduleMessage, setScheduleMessage] = useState<string | null>(null);
   const [manualToken, setManualToken] = useState("");
   const [manualTokenSaving, setManualTokenSaving] = useState(false);
+  const [cleanupPreview, setCleanupPreview] = useState<CleanupPreview | null>(null);
+  const [cleanupRuns, setCleanupRuns] = useState<CleanupRun[]>([]);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
   const seededRef = useRef(false);
   const browserPathRef = useRef("/");
   const dashboardLoadRef = useRef(false);
@@ -151,17 +180,23 @@ export default function App() {
                 : dashboardResult.settings.sync_defaults.destination_path;
             setSettingsDraft({
               ...dashboardResult.settings,
-              sync_defaults: { destination_path: normalizedDestination },
+              sync_defaults: {
+                destination_path: normalizedDestination,
+                deletion_policy: dashboardResult.settings.sync_defaults.deletion_policy,
+              },
             });
             setDestination(normalizedDestination);
+            setDeletionPolicy(dashboardResult.settings.sync_defaults.deletion_policy);
             setFolderPath(browserResult.entries[0]?.path ?? "/");
             setScheduleDraft((current) => ({
               ...current,
               folder_path: browserResult.entries[0]?.path ?? "/",
               destination_path: normalizedDestination,
+              deletion_policy: dashboardResult.settings.sync_defaults.deletion_policy,
             }));
             seededRef.current = true;
           }
+          setCleanupRuns(dashboardResult.cleanup_runs);
           setError(null);
         });
       } catch (loadError) {
@@ -258,6 +293,7 @@ export default function App() {
         mode,
         folder_path: mode === "folder" ? folderPath : undefined,
         destination_path: trimmedDestination,
+        deletion_policy: deletionPolicy,
       });
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
     } catch (issue) {
@@ -299,6 +335,7 @@ export default function App() {
       mode,
       folder_path: mode === "folder" ? folderPath : null,
       destination_path: trimmedDestination,
+      deletion_policy: deletionPolicy,
     };
 
     try {
@@ -353,12 +390,21 @@ export default function App() {
     setMode(schedule.mode);
     setFolderPath(schedule.folder_path ?? "/");
     setDestination(schedule.destination_path);
+    setDeletionPolicy(schedule.deletion_policy);
+    setSettingsDraft((current) => ({
+      ...current,
+      sync_defaults: {
+        destination_path: schedule.destination_path,
+        deletion_policy: schedule.deletion_policy,
+      },
+    }));
     setScheduleDraft({
       name: schedule.name,
       enabled: schedule.enabled,
-      mode: schedule.mode,
-      folder_path: schedule.folder_path ?? null,
-      destination_path: schedule.destination_path,
+        mode: schedule.mode,
+        folder_path: schedule.folder_path ?? null,
+        destination_path: schedule.destination_path,
+      deletion_policy: schedule.deletion_policy,
       schedule_type: schedule.schedule_type,
       interval_hours: schedule.interval_hours,
       daily_time: schedule.daily_time,
@@ -372,6 +418,7 @@ export default function App() {
       mode,
       folder_path: mode === "folder" ? folderPath : null,
       destination_path: destination,
+      deletion_policy: deletionPolicy,
     });
   }
 
@@ -383,6 +430,8 @@ export default function App() {
     try {
       const saved = await saveSettings(settingsDraft);
       setSettingsDraft(saved);
+      setDeletionPolicy(saved.sync_defaults.deletion_policy);
+      setDestination(saved.sync_defaults.destination_path);
       setSettingsSaved("Settings saved.");
     } catch (issue) {
       setSettingsError(issue instanceof Error ? issue.message : "Unable to save settings.");
@@ -475,14 +524,45 @@ export default function App() {
     setDestination(location);
     setSettingsDraft((current) => ({
       ...current,
-      sync_defaults: { destination_path: location },
+      sync_defaults: {
+        destination_path: location,
+        deletion_policy: current.sync_defaults.deletion_policy,
+      },
     }));
+  }
+
+  async function handlePreviewCleanup() {
+    setSettingsError(null);
+    try {
+      const preview = await previewCleanup();
+      setCleanupPreview(preview);
+    } catch (issue) {
+      setSettingsError(issue instanceof Error ? issue.message : "Unable to preview cleanup.");
+    }
+  }
+
+  async function handleRunCleanup() {
+    setSettingsError(null);
+    setCleanupBusy(true);
+    try {
+      const run = await runCleanup();
+      setCleanupRuns((current) => [run, ...current.filter((item) => item.id !== run.id)]);
+      setCleanupPreview(null);
+      setSettingsSaved("Storage cleanup started.");
+      const nextRuns = await fetchCleanupRuns();
+      setCleanupRuns(nextRuns);
+    } catch (issue) {
+      setSettingsError(issue instanceof Error ? issue.message : "Unable to start cleanup.");
+    } finally {
+      setCleanupBusy(false);
+    }
   }
 
   const selectedJob = jobs[0];
   const activeSyncJob = jobs.find((job) => job.status === "running" || job.status === "queued");
   const latestFinishedJob = jobs.find((job) => job.status === "completed" || job.status === "failed");
   const syncFocusJob = activeSyncJob ?? selectedJob;
+  const latestCleanupRun = cleanupRuns[0] ?? dashboard.cleanup_runs[0] ?? null;
   const selectedLibraryIds = new Set(settingsDraft.jellyfin.selected_library_ids);
   const selectedLibraries = jellyfinLibraries.filter((library) => selectedLibraryIds.has(library.id));
   const nativeRedirectUri = "http://localhost:8000/api/auth/putio/callback";
@@ -496,10 +576,31 @@ export default function App() {
       timeStyle: "short",
     });
   };
+  const formatBytes = (value: number) => {
+    if (value <= 0) {
+      return "0 B";
+    }
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let size = value;
+    let unit = units[0];
+    for (const currentUnit of units) {
+      unit = currentUnit;
+      if (size < 1024 || currentUnit === units[units.length - 1]) {
+        break;
+      }
+      size /= 1024;
+    }
+    return `${size.toFixed(1)} ${unit}`;
+  };
   const destinationValidationError = !destination.trim()
     ? "Full local path required."
     : !destination.trim().startsWith("/")
       ? "Use an absolute local path."
+      : null;
+  const cleanupSettings = settingsDraft.storage_cleanup;
+  const cleanupValidationError =
+    cleanupSettings.target_free_percent <= cleanupSettings.threshold_free_percent
+      ? "Cleanup target free space must be greater than the threshold."
       : null;
   const tabs: Array<{ id: AppTab; label: string; note: string }> = [
     { id: "putio", label: "Put.io", note: dashboard.putio_connected ? "Connected" : "Needs auth" },
@@ -507,6 +608,15 @@ export default function App() {
       id: "sync",
       label: "Sync",
       note: activeSyncJob ? "Running now" : latestFinishedJob ? "Recent activity" : "Ready",
+    },
+    {
+      id: "storage",
+      label: "Storage",
+      note: cleanupSettings.enabled
+        ? cleanupSettings.schedule_enabled
+          ? "Cleanup scheduled"
+          : "Cleanup ready"
+        : "Optional",
     },
     {
       id: "jellyfin",
@@ -553,6 +663,10 @@ export default function App() {
             <div className="signal-card">
               <span className="signal-label">Jellyfin intent</span>
               <strong>{selectedLibraries.length ? `${selectedLibraries.length} libraries` : "Global hook"}</strong>
+            </div>
+            <div className="signal-card">
+              <span className="signal-label">Deletion policy</span>
+              <strong>{deletionPolicy === "mirror_remote" ? "Mirror remote" : "Keep local"}</strong>
             </div>
           </div>
         </section>
@@ -763,6 +877,47 @@ export default function App() {
                 </label>
 
                 <label>
+                  <span>Deletion policy</span>
+                  <div className="mode-toggle">
+                    <button
+                      className={deletionPolicy === "keep_local" ? "mode-option active" : "mode-option"}
+                      onClick={() => {
+                        setDeletionPolicy("keep_local");
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          sync_defaults: {
+                            ...current.sync_defaults,
+                            deletion_policy: "keep_local",
+                          },
+                        }));
+                      }}
+                      type="button"
+                    >
+                      Keep local files
+                    </button>
+                    <button
+                      className={deletionPolicy === "mirror_remote" ? "mode-option active" : "mode-option"}
+                      onClick={() => {
+                        setDeletionPolicy("mirror_remote");
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          sync_defaults: {
+                            ...current.sync_defaults,
+                            deletion_policy: "mirror_remote",
+                          },
+                        }));
+                      }}
+                      type="button"
+                    >
+                      Mirror Put.io deletions
+                    </button>
+                  </div>
+                  <p className="muted-copy">
+                    Mirror mode is destructive. Local files missing from Put.io will also be deleted.
+                  </p>
+                </label>
+
+                <label>
                   <span>Put.io path</span>
                   <input
                     disabled={mode === "all"}
@@ -838,7 +993,10 @@ export default function App() {
                       setDestination(nextValue);
                       setSettingsDraft((current) => ({
                         ...current,
-                        sync_defaults: { destination_path: nextValue },
+                        sync_defaults: {
+                          destination_path: nextValue,
+                          deletion_policy: current.sync_defaults.deletion_policy,
+                        },
                       }));
                     }}
                     placeholder="/full/path/on/this/machine"
@@ -894,6 +1052,12 @@ export default function App() {
                       <strong>{syncFocusJob.label}</strong>
                       <p>
                         Destination: {syncFocusJob.destination_path}
+                      </p>
+                      <p>
+                        Policy:{" "}
+                        {syncFocusJob.deletion_policy === "mirror_remote"
+                          ? "Mirror Put.io deletions"
+                          : "Keep local files"}
                       </p>
                       <p>
                         Started: {formatTimestamp(syncFocusJob.started_at ?? syncFocusJob.created_at)} · Finished:{" "}
@@ -954,6 +1118,301 @@ export default function App() {
               ) : (
                 <div className="empty-preview">
                   <p>Choose a scope and destination, then run a sync to see its status and logs here.</p>
+                </div>
+              )}
+            </article>
+          </section>
+        )}
+
+        {activeTab === "storage" && (
+          <section className="workspace-grid tab-panel">
+            <article className="panel settings-panel">
+              <div className="section-heading">
+                <h2>Storage cleanup</h2>
+                <span className="small-note">
+                  {cleanupSettings.enabled ? "Oldest-first reclaim" : "Disabled"}
+                </span>
+              </div>
+              <form className="settings-form" onSubmit={handleSaveSettings}>
+                <label className="toggle-row">
+                  <input
+                    checked={cleanupSettings.enabled}
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        storage_cleanup: {
+                          ...current.storage_cleanup,
+                          enabled: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>Enable storage cleanup</span>
+                </label>
+                <label>
+                  <span>Run when free space drops below</span>
+                  <input
+                    max={95}
+                    min={1}
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        storage_cleanup: {
+                          ...current.storage_cleanup,
+                          threshold_free_percent: Number(event.target.value) || 1,
+                        },
+                      }))
+                    }
+                    type="number"
+                    value={cleanupSettings.threshold_free_percent}
+                  />
+                  <p className="muted-copy">Percent free space remaining on the storage volume.</p>
+                </label>
+                <label>
+                  <span>Reclaim up to</span>
+                  <input
+                    max={99}
+                    min={1}
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        storage_cleanup: {
+                          ...current.storage_cleanup,
+                          target_free_percent: Number(event.target.value) || 1,
+                        },
+                      }))
+                    }
+                    type="number"
+                    value={cleanupSettings.target_free_percent}
+                  />
+                  <p className="muted-copy">Target free percent after cleanup finishes.</p>
+                </label>
+                <label>
+                  <span>Minimum file age</span>
+                  <input
+                    max={3650}
+                    min={0}
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        storage_cleanup: {
+                          ...current.storage_cleanup,
+                          min_age_days: Number(event.target.value) || 0,
+                        },
+                      }))
+                    }
+                    type="number"
+                    value={cleanupSettings.min_age_days}
+                  />
+                  <p className="muted-copy">Only files older than this many days are eligible.</p>
+                </label>
+                <label>
+                  <span>Exclude paths</span>
+                  <textarea
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        storage_cleanup: {
+                          ...current.storage_cleanup,
+                          exclude_paths: event.target.value
+                            .split("\n")
+                            .map((value) => value.trim())
+                            .filter(Boolean),
+                        },
+                      }))
+                    }
+                    placeholder={"/media/library/keep\n/media/library/home-videos"}
+                    rows={4}
+                    value={cleanupSettings.exclude_paths.join("\n")}
+                  />
+                  <p className="muted-copy">One absolute local path per line.</p>
+                </label>
+                <label className="toggle-row">
+                  <input
+                    checked={cleanupSettings.schedule_enabled}
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        storage_cleanup: {
+                          ...current.storage_cleanup,
+                          schedule_enabled: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>Run cleanup on a schedule</span>
+                </label>
+                <label>
+                  <span>Cleanup schedule type</span>
+                  <div className="mode-toggle">
+                    <button
+                      className={
+                        cleanupSettings.schedule_type === "daily"
+                          ? "mode-option active"
+                          : "mode-option"
+                      }
+                      onClick={() =>
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          storage_cleanup: {
+                            ...current.storage_cleanup,
+                            schedule_type: "daily",
+                          },
+                        }))
+                      }
+                      type="button"
+                    >
+                      Daily
+                    </button>
+                    <button
+                      className={
+                        cleanupSettings.schedule_type === "interval"
+                          ? "mode-option active"
+                          : "mode-option"
+                      }
+                      onClick={() =>
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          storage_cleanup: {
+                            ...current.storage_cleanup,
+                            schedule_type: "interval",
+                          },
+                        }))
+                      }
+                      type="button"
+                    >
+                      Interval
+                    </button>
+                  </div>
+                </label>
+                {cleanupSettings.schedule_type === "daily" ? (
+                  <label>
+                    <span>Daily cleanup time</span>
+                    <input
+                      onChange={(event) =>
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          storage_cleanup: {
+                            ...current.storage_cleanup,
+                            daily_time: event.target.value,
+                          },
+                        }))
+                      }
+                      type="time"
+                      value={cleanupSettings.daily_time}
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    <span>Cleanup interval hours</span>
+                    <input
+                      max={168}
+                      min={1}
+                      onChange={(event) =>
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          storage_cleanup: {
+                            ...current.storage_cleanup,
+                            interval_hours: Number(event.target.value) || 1,
+                          },
+                        }))
+                      }
+                      type="number"
+                      value={cleanupSettings.interval_hours}
+                    />
+                  </label>
+                )}
+
+                {cleanupValidationError && <p className="field-hint invalid">{cleanupValidationError}</p>}
+
+                <div className="inline-actions">
+                  <button className="primary-button" disabled={settingsSaving || cleanupValidationError !== null} type="submit">
+                    {settingsSaving ? "Saving..." : "Save cleanup settings"}
+                  </button>
+                  <button className="ghost-button" onClick={() => void handlePreviewCleanup()} type="button">
+                    Preview cleanup
+                  </button>
+                  <button
+                    className="ghost-button"
+                    disabled={cleanupBusy || cleanupValidationError !== null || !cleanupSettings.enabled}
+                    onClick={() => void handleRunCleanup()}
+                    type="button"
+                  >
+                    {cleanupBusy ? "Starting..." : "Run cleanup now"}
+                  </button>
+                </div>
+                <p className="muted-copy">
+                  Cleanup deletes the oldest eligible local files to restore free space. It is separate
+                  from Put.io sync deletion mirroring.
+                </p>
+              </form>
+            </article>
+
+            <article className="panel preview-panel">
+              <div className="section-heading">
+                <h2>Cleanup activity</h2>
+                <span className="small-note">
+                  {cleanupSettings.schedule_enabled ? "Scheduled" : "Manual"}
+                </span>
+              </div>
+              <div className="status-grid sync-status-grid">
+                <div className="signal-card">
+                  <span className="signal-label">Next cleanup</span>
+                  <strong>{formatTimestamp(dashboard.cleanup_schedule.next_run_at)}</strong>
+                </div>
+                <div className="signal-card">
+                  <span className="signal-label">Last cleanup</span>
+                  <strong>{formatTimestamp(dashboard.cleanup_schedule.last_run_at)}</strong>
+                </div>
+                <div className="signal-card">
+                  <span className="signal-label">Latest result</span>
+                  <strong>{latestCleanupRun ? latestCleanupRun.status : "Idle"}</strong>
+                </div>
+              </div>
+
+              {cleanupPreview && (
+                <div className="preview-block">
+                  <h3>Preview</h3>
+                  <p>{cleanupPreview.summary}</p>
+                  <p>
+                    Free space: {cleanupPreview.free_percent}% · Candidates: {cleanupPreview.candidate_count}
+                  </p>
+                  <p>
+                    Estimated reclaim: {formatBytes(cleanupPreview.estimated_bytes_reclaimed)} across{" "}
+                    {cleanupPreview.estimated_files_to_delete} files.
+                  </p>
+                  {!!cleanupPreview.sample_paths.length && (
+                    <ul>
+                      {cleanupPreview.sample_paths.map((path) => (
+                        <li key={path}>{path}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {latestCleanupRun ? (
+                <div className="preview-block">
+                  <h3>Latest cleanup run</h3>
+                  <p>
+                    Deleted {latestCleanupRun.deleted_files} files and reclaimed{" "}
+                    {formatBytes(latestCleanupRun.reclaimed_bytes)}.
+                  </p>
+                  <p>
+                    Free space: {latestCleanupRun.free_percent_before}% →{" "}
+                    {latestCleanupRun.free_percent_after ?? latestCleanupRun.free_percent_before}%
+                  </p>
+                  <code className="log-block">
+                    {latestCleanupRun.log_lines.length
+                      ? latestCleanupRun.log_lines.join("\n")
+                      : "No cleanup log lines yet."}
+                  </code>
+                </div>
+              ) : (
+                <div className="empty-preview">
+                  <p>Preview or run cleanup to see reclaim estimates and deletion logs here.</p>
                 </div>
               )}
             </article>
@@ -1197,6 +1656,10 @@ export default function App() {
                 This saves the current sync selection:{" "}
                 {mode === "all" ? "all Put.io content" : folderPath} to {destination}.
               </p>
+              <p className="muted-copy">
+                Deletion policy:{" "}
+                {deletionPolicy === "mirror_remote" ? "Mirror Put.io deletions" : "Keep local files"}.
+              </p>
               {destinationValidationError !== null && (
                 <p className="field-hint invalid">
                   Set the destination path in the Sync tab before saving a recurring job.
@@ -1238,6 +1701,11 @@ export default function App() {
                       <p>
                         {schedule.mode === "all" ? "Full library" : schedule.folder_path} to{" "}
                         {schedule.destination_path}
+                      </p>
+                      <p>
+                        {schedule.deletion_policy === "mirror_remote"
+                          ? "Mirror Put.io deletions"
+                          : "Keep local files"}
                       </p>
                       <p>
                         {schedule.schedule_type === "daily"
@@ -1298,6 +1766,11 @@ export default function App() {
                       <p>
                         {job.mode === "all" ? "Full library" : job.folder_path} to{" "}
                         {job.destination_path}
+                      </p>
+                      <p>
+                        {job.deletion_policy === "mirror_remote"
+                          ? "Mirror Put.io deletions"
+                          : "Keep local files"}
                       </p>
                     </div>
                     <span
