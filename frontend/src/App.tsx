@@ -1133,25 +1133,37 @@ export default function App() {
                   </label>
                 )}
 
-                <p className="muted-copy">
-                  This saves the current sync selection:{" "}
-                  {mode === "all" ? "all Put.io content" : folderPath} to {destination}.
+              <p className="muted-copy">
+                This saves the current sync selection:{" "}
+                {mode === "all" ? "all Put.io content" : folderPath} to {destination}.
+              </p>
+              {destinationValidationError !== null && (
+                <p className="field-hint invalid">
+                  Set the destination path in the Sync tab before saving a recurring job.
                 </p>
+              )}
 
-                <div className="inline-actions">
+              <div className="inline-actions">
                   <button
                     className="primary-button"
                     disabled={scheduleSaving || destinationValidationError !== null}
                     type="submit"
                   >
-                    {destinationValidationError !== null && !scheduleSaving
-                      ? "Enter destination path"
-                      : scheduleSaving
-                        ? "Saving..."
-                        : editingScheduleId
-                          ? "Update recurring job"
-                          : "Save recurring job"}
+                    {scheduleSaving
+                      ? "Saving..."
+                      : editingScheduleId
+                        ? "Update recurring job"
+                        : "Save recurring job"}
                   </button>
+                  {destinationValidationError !== null && (
+                    <button
+                      className="ghost-button"
+                      onClick={() => setActiveTab("sync")}
+                      type="button"
+                    >
+                      Open Sync tab
+                    </button>
+                  )}
                   <button className="ghost-button" onClick={resetScheduleEditor} type="button">
                     Clear editor
                   </button>
