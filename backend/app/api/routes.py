@@ -25,6 +25,7 @@ from app.config import Settings, get_settings
 from app.models.state import AppState
 from app.services.jobs import JobService
 from app.services.jellyfin import JellyfinService
+from app.services.filesystem import FilesystemBrowserService
 from app.services.putio import PutioService
 from app.services.scheduler import SchedulerService, get_scheduler_service
 from app.services.state import StateStore, get_state_store
@@ -135,6 +136,16 @@ def browse_putio(
 ) -> PutioBrowserResponse:
     try:
         return PutioService(settings, state).browse_path(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/local/browser", response_model=PutioBrowserResponse)
+def browse_local(
+    path: str | None = Query(default=None),
+) -> PutioBrowserResponse:
+    try:
+        return FilesystemBrowserService().browse_path(path)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -1,6 +1,7 @@
 import { FormEvent, startTransition, useEffect, useRef, useState } from "react";
 import {
   AppSettings,
+  browseLocal,
   cancelJob,
   createSchedule,
   DashboardResponse,
@@ -82,6 +83,7 @@ export default function App() {
   const [dashboard, setDashboard] = useState<DashboardResponse>(fallbackDashboard);
   const [jobs, setJobs] = useState<JobDetail[]>([]);
   const [putioBrowser, setPutioBrowser] = useState<PutioBrowser>(fallbackDashboard.putio_browser);
+  const [localBrowser, setLocalBrowser] = useState<PutioBrowser>(fallbackDashboard.putio_browser);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>("putio");
@@ -97,6 +99,7 @@ export default function App() {
   const [runError, setRunError] = useState<string | null>(null);
   const [jobMessage, setJobMessage] = useState<string | null>(null);
   const [browserLoading, setBrowserLoading] = useState(false);
+  const [localBrowserLoading, setLocalBrowserLoading] = useState(false);
   const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(defaultScheduleDraft);
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
   const [scheduleSaving, setScheduleSaving] = useState(false);
@@ -106,6 +109,7 @@ export default function App() {
   const [manualTokenSaving, setManualTokenSaving] = useState(false);
   const seededRef = useRef(false);
   const browserPathRef = useRef("/");
+  const localBrowserPathRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -118,6 +122,7 @@ export default function App() {
         }
 
         let browserResult = dashboardResult.putio_browser;
+        let localBrowserResult = localBrowser;
         if (
           dashboardResult.putio_connected &&
           browserPathRef.current !== "/" &&
@@ -131,11 +136,26 @@ export default function App() {
           }
         }
 
+        if (!seededRef.current) {
+          const initialLocalPath =
+            dashboardResult.settings.sync_defaults.destination_path ||
+            dashboardResult.destinations[0] ||
+            undefined;
+          try {
+            localBrowserResult = await browseLocal(initialLocalPath);
+            localBrowserPathRef.current = localBrowserResult.current_path;
+          } catch {
+            localBrowserResult = fallbackDashboard.putio_browser;
+            localBrowserPathRef.current = null;
+          }
+        }
+
         startTransition(() => {
           setDashboard(dashboardResult);
           setJobs(jobsResult);
           setPutioBrowser(browserResult);
           if (!seededRef.current) {
+            setLocalBrowser(localBrowserResult);
             setSettingsDraft(dashboardResult.settings);
             setDestination(
               dashboardResult.settings.sync_defaults.destination_path ||
@@ -374,6 +394,19 @@ export default function App() {
     }
   }
 
+  async function handleBrowseLocal(path?: string) {
+    setLocalBrowserLoading(true);
+    try {
+      const browser = await browseLocal(path);
+      localBrowserPathRef.current = browser.current_path;
+      setLocalBrowser(browser);
+    } catch (issue) {
+      setSettingsError(issue instanceof Error ? issue.message : "Unable to browse local folders.");
+    } finally {
+      setLocalBrowserLoading(false);
+    }
+  }
+
   function handleLibraryToggle(libraryId: string, checked: boolean) {
     setSettingsDraft((current) => ({
       ...current,
@@ -392,6 +425,7 @@ export default function App() {
       ...current,
       sync_defaults: { destination_path: location },
     }));
+    void handleBrowseLocal(location);
   }
 
   const selectedJob = jobs[0];
@@ -664,14 +698,22 @@ export default function App() {
                   <div className="mode-toggle">
                     <button
                       className={mode === "folder" ? "mode-option active" : "mode-option"}
-                      onClick={() => setMode("folder")}
+                      onClick={() => {
+                        setMode("folder");
+                        if (folderPath === "/") {
+                          setFolderPath(putioBrowser.current_path || "/");
+                        }
+                      }}
                       type="button"
                     >
                       Specific folder
                     </button>
                     <button
                       className={mode === "all" ? "mode-option active" : "mode-option"}
-                      onClick={() => setMode("all")}
+                      onClick={() => {
+                        setMode("all");
+                        setFolderPath("/");
+                      }}
                       type="button"
                     >
                       Everything
@@ -685,7 +727,7 @@ export default function App() {
                     disabled={mode === "all"}
                     onChange={(event) => setFolderPath(event.target.value)}
                     placeholder="/Movies"
-                    value={folderPath}
+                    value={mode === "all" ? "/" : folderPath}
                   />
                 </label>
 
@@ -751,7 +793,14 @@ export default function App() {
                   <span>Destination path</span>
                   <input
                     list="destinations"
-                    onChange={(event) => setDestination(event.target.value)}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setDestination(nextValue);
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        sync_defaults: { destination_path: nextValue },
+                      }));
+                    }}
                     placeholder="/media/staging"
                     value={destination}
                   />
@@ -761,6 +810,80 @@ export default function App() {
                     ))}
                   </datalist>
                 </label>
+
+                <div className="browser-panel">
+                  <div className="section-heading compact-heading">
+                    <h3>Local destination browser</h3>
+                    <span className="small-note">
+                      {localBrowserLoading ? "Loading" : localBrowser.current_path || "Pick a folder"}
+                    </span>
+                  </div>
+                  <p className="muted-copy">
+                    Click a folder to use it as the destination. Double-click to move deeper into the local
+                    filesystem.
+                  </p>
+                  <div className="location-list">
+                    {localBrowser.current_path && (
+                      <button
+                        className="path-chip"
+                        onClick={() => {
+                          setDestination(localBrowser.current_path);
+                          setSettingsDraft((current) => ({
+                            ...current,
+                            sync_defaults: { destination_path: localBrowser.current_path },
+                          }));
+                        }}
+                        type="button"
+                      >
+                        Use current folder
+                      </button>
+                    )}
+                  </div>
+                  <div className="breadcrumb-row">
+                    {localBrowser.breadcrumbs.map((crumb) => (
+                      <button
+                        className="breadcrumb-chip"
+                        key={crumb.path}
+                        onClick={() => void handleBrowseLocal(crumb.path)}
+                        type="button"
+                      >
+                        {crumb.name}
+                      </button>
+                    ))}
+                    {localBrowser.parent_path && (
+                      <button
+                        className="breadcrumb-chip"
+                        onClick={() => void handleBrowseLocal(localBrowser.parent_path ?? undefined)}
+                        type="button"
+                      >
+                        Up
+                      </button>
+                    )}
+                  </div>
+                  <div className="folder-list browser-list">
+                    {localBrowser.entries.map((entry) => (
+                      <button
+                        className={`folder-chip ${entry.path === destination ? "selected" : ""}`}
+                        key={entry.id}
+                        onClick={() => {
+                          setDestination(entry.path);
+                          setSettingsDraft((current) => ({
+                            ...current,
+                            sync_defaults: { destination_path: entry.path },
+                          }));
+                        }}
+                        onDoubleClick={() => void handleBrowseLocal(entry.path)}
+                        type="button"
+                      >
+                        <span>{entry.name}</span>
+                        <small>{entry.path}</small>
+                      </button>
+                    ))}
+                    {!localBrowser.entries.length && (
+                      <p className="empty-state">No local folders found at this level.</p>
+                    )}
+                  </div>
+                </div>
 
                 <div className="inline-actions">
                   <button

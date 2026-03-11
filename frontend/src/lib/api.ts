@@ -164,6 +164,15 @@ export async function browsePutio(path: string): Promise<PutioBrowser> {
   return response.json();
 }
 
+export async function browseLocal(path?: string): Promise<PutioBrowser> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+  const response = await fetch(`${API_BASE_URL}/api/local/browser${query}`);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
 export async function previewSync(payload: {
   mode: "all" | "folder";
   folder_path?: string;
