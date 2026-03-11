@@ -222,8 +222,79 @@ code,
   margin-top: 1.2rem;
 }
 
+.tab-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.9rem;
+  margin-top: 1.2rem;
+}
+
+.tab-button {
+  display: grid;
+  gap: 0.3rem;
+  align-items: start;
+  justify-items: start;
+  padding: 1rem 1.1rem;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
+    rgba(8, 17, 24, 0.64);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    color 180ms ease;
+}
+
+.tab-button span {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.tab-button small {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tab-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(63, 208, 201, 0.28);
+}
+
+.tab-button.active {
+  border-color: rgba(166, 244, 197, 0.34);
+  background:
+    linear-gradient(135deg, rgba(166, 244, 197, 0.18), rgba(63, 208, 201, 0.12)),
+    rgba(8, 17, 24, 0.82);
+}
+
+.feedback-stack {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.feedback-stack:empty {
+  display: none;
+}
+
+.tab-panel {
+  animation: panel-rise 220ms ease;
+}
+
 .status-grid {
   grid-template-columns: 1fr 1fr;
+}
+
+.status-grid.single-panel {
+  grid-template-columns: 1fr;
 }
 
 .workspace-grid {
@@ -551,10 +622,27 @@ code,
   white-space: pre-wrap;
 }
 
+@keyframes panel-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 960px) {
   .hero,
   .status-grid,
   .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tab-strip,
+  .jobs-grid {
     grid-template-columns: 1fr;
   }
 

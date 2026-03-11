@@ -23,6 +23,7 @@ import {
 } from "./lib/api";
 
 type SyncMode = "all" | "folder";
+type AppTab = "putio" | "jellyfin" | "jobs";
 type ScheduleDraft = Omit<RecurringSchedule, "id" | "next_run_at" | "last_run_at" | "last_job_id">;
 
 const defaultScheduleDraft: ScheduleDraft = {
@@ -84,6 +85,7 @@ export default function App() {
   const [putioBrowser, setPutioBrowser] = useState<PutioBrowser>(fallbackDashboard.putio_browser);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<AppTab>("putio");
   const [mode, setMode] = useState<SyncMode>("folder");
   const [folderPath, setFolderPath] = useState("/Movies");
   const [destination, setDestination] = useState("/media/staging");
@@ -408,6 +410,19 @@ export default function App() {
   );
   const nativeRedirectUri = "http://localhost:8000/api/auth/putio/callback";
   const containerRedirectUri = "http://localhost:8787/api/auth/putio/callback";
+  const tabs: Array<{ id: AppTab; label: string; note: string }> = [
+    { id: "putio", label: "Put.io", note: dashboard.putio_connected ? "Connected" : "Needs auth" },
+    {
+      id: "jellyfin",
+      label: "Jellyfin",
+      note: settingsDraft.jellyfin.enabled ? "Hook ready" : "Optional",
+    },
+    {
+      id: "jobs",
+      label: "Jobs",
+      note: dashboard.schedules.length ? `${dashboard.schedules.length} scheduled` : "Manual only",
+    },
+  ];
 
   return (
     <div className="page-shell">
@@ -446,654 +461,706 @@ export default function App() {
           </div>
         </section>
 
-        <section className="status-grid">
-          <article className="panel settings-panel">
-            <div className="section-heading">
-              <h2>Put.io link</h2>
-              <span className="small-note">
-                {dashboard.putio_connected ? "Connected" : "OAuth required"}
-              </span>
-            </div>
-            <form className="settings-form" onSubmit={handleSaveSettings}>
-              <label>
-                <span>Put.io client ID</span>
-                <input
-                  onChange={(event) =>
-                    setSettingsDraft((current) => ({
-                      ...current,
-                      putio: { ...current.putio, app_id: event.target.value },
-                    }))
-                  }
-                  value={settingsDraft.putio.app_id}
-                />
-              </label>
-              <label>
-                <span>Put.io client secret</span>
-                <input
-                  onChange={(event) =>
-                    setSettingsDraft((current) => ({
-                      ...current,
-                      putio: { ...current.putio, client_secret: event.target.value },
-                    }))
-                  }
-                  type="password"
-                  value={settingsDraft.putio.client_secret}
-                />
-              </label>
-              <label>
-                <span>OAuth redirect URI</span>
-                <input
-                  onChange={(event) =>
-                    setSettingsDraft((current) => ({
-                      ...current,
-                      putio: { ...current.putio, redirect_uri: event.target.value },
-                    }))
-                  }
-                  value={settingsDraft.putio.redirect_uri}
-                />
-              </label>
-              <div className="browser-panel">
-                <div className="section-heading compact-heading">
-                  <h3>Put.io setup</h3>
-                  <span className="small-note">Helper values</span>
+        <section className="tab-strip" aria-label="Primary views">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              className={activeTab === tab.id ? "tab-button active" : "tab-button"}
+              onClick={() => setActiveTab(tab.id)}
+              type="button"
+            >
+              <span>{tab.label}</span>
+              <small>{tab.note}</small>
+            </button>
+          ))}
+        </section>
+
+        <section className="feedback-stack" aria-live="polite">
+          {previewError && <p className="error-banner">{previewError}</p>}
+          {error && <p className="error-banner">{error}</p>}
+          {runError && <p className="error-banner">{runError}</p>}
+          {settingsError && <p className="error-banner">{settingsError}</p>}
+          {scheduleError && <p className="error-banner">{scheduleError}</p>}
+          {settingsSaved && <p className="success-banner">{settingsSaved}</p>}
+          {jellyfinMessage && <p className="success-banner">{jellyfinMessage}</p>}
+          {scheduleMessage && <p className="success-banner">{scheduleMessage}</p>}
+        </section>
+
+        {activeTab === "putio" && (
+          <>
+            <section className="status-grid tab-panel">
+              <article className="panel settings-panel">
+                <div className="section-heading">
+                  <h2>Put.io link</h2>
+                  <span className="small-note">
+                    {dashboard.putio_connected ? "Connected" : "OAuth required"}
+                  </span>
                 </div>
-                <div className="location-list">
-                  <a
-                    className="path-chip path-link"
-                    href="https://app.put.io/oauth/new"
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    Create new app on Put.io
-                  </a>
-                  <button
-                    className="path-chip"
-                    onClick={() =>
+                <form className="settings-form" onSubmit={handleSaveSettings}>
+                  <label>
+                    <span>Put.io client ID</span>
+                    <input
+                      onChange={(event) =>
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          putio: { ...current.putio, app_id: event.target.value },
+                        }))
+                      }
+                      value={settingsDraft.putio.app_id}
+                    />
+                  </label>
+                  <label>
+                    <span>Put.io client secret</span>
+                    <input
+                      onChange={(event) =>
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          putio: { ...current.putio, client_secret: event.target.value },
+                        }))
+                      }
+                      type="password"
+                      value={settingsDraft.putio.client_secret}
+                    />
+                  </label>
+                  <label>
+                    <span>OAuth redirect URI</span>
+                    <input
+                      onChange={(event) =>
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          putio: { ...current.putio, redirect_uri: event.target.value },
+                        }))
+                      }
+                      value={settingsDraft.putio.redirect_uri}
+                    />
+                  </label>
+                  <div className="browser-panel">
+                    <div className="section-heading compact-heading">
+                      <h3>Put.io setup</h3>
+                      <span className="small-note">Helper values</span>
+                    </div>
+                    <div className="location-list">
+                      <a
+                        className="path-chip path-link"
+                        href="https://app.put.io/oauth/new"
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Create new app on Put.io
+                      </a>
+                      <button
+                        className="path-chip"
+                        onClick={() =>
+                          setSettingsDraft((current) => ({
+                            ...current,
+                            putio: { ...current.putio, redirect_uri: nativeRedirectUri },
+                          }))
+                        }
+                        type="button"
+                      >
+                        Use native callback
+                      </button>
+                      <button
+                        className="path-chip"
+                        onClick={() =>
+                          setSettingsDraft((current) => ({
+                            ...current,
+                            putio: { ...current.putio, redirect_uri: containerRedirectUri },
+                          }))
+                        }
+                        type="button"
+                      >
+                        Use container callback
+                      </button>
+                    </div>
+                    <p className="muted-copy">
+                      Put.io does not document query-string prefills for the new app form, so this link can
+                      open the page but not reliably populate its fields for you.
+                    </p>
+                    <div className="preview-block">
+                      <h3>Suggested Put.io app values</h3>
+                      <ul>
+                        <li>Name: `get-put.io`</li>
+                        <li>Description: `Self-hosted Put.io sync portal for Jellyfin libraries.`</li>
+                        <li>Website for native mode: `http://localhost:5173`</li>
+                        <li>Callback for native mode: `http://localhost:8000/api/auth/putio/callback`</li>
+                        <li>Callback for Docker/container mode: `http://localhost:8787/api/auth/putio/callback`</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div className="inline-actions">
+                    <button className="primary-button" disabled={settingsSaving} type="submit">
+                      {settingsSaving ? "Saving..." : "Save integration settings"}
+                    </button>
+                    <button
+                      className="ghost-button"
+                      disabled={authBusy}
+                      onClick={
+                        dashboard.putio_connected ? handleDisconnectPutio : handleStartPutioAuth
+                      }
+                      type="button"
+                    >
+                      {dashboard.putio_connected ? "Disconnect Put.io" : "Start Put.io login"}
+                    </button>
+                  </div>
+                  <p className="muted-copy">
+                    {dashboard.putio_connected
+                      ? `Connected as ${dashboard.settings.putio.account_username ?? "Put.io user"}.`
+                      : "Create a Put.io app, save the client ID and secret here, then start the browser login."}
+                  </p>
+                  <div className="preview-block">
+                    <h3>Manual token fallback</h3>
+                    <p>
+                      If you prefer, you can paste the OAuth token from Put.io's Secrets page instead of
+                      doing the browser login flow.
+                    </p>
+                    <div className="manual-token-row">
+                      <input
+                        onChange={(event) => setManualToken(event.target.value)}
+                        placeholder="Paste Put.io OAuth token"
+                        type="password"
+                        value={manualToken}
+                      />
+                      <button
+                        className="ghost-button small-button"
+                        disabled={manualTokenSaving || !manualToken.trim()}
+                        onClick={() => void handleSaveManualToken()}
+                        type="button"
+                      >
+                        {manualTokenSaving ? "Saving..." : "Use token"}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              </article>
+            </section>
+
+            <section className="workspace-grid tab-panel">
+              <article className="panel composer-panel">
+                <div className="section-heading">
+                  <h2>Compose a sync</h2>
+                  <span className="small-note">Preview first</span>
+                </div>
+
+                <form className="sync-form" onSubmit={handlePreview}>
+                  <label>
+                    <span>Default destination path</span>
+                    <input
+                      onChange={(event) =>
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          sync_defaults: { destination_path: event.target.value },
+                        }))
+                      }
+                      value={settingsDraft.sync_defaults.destination_path}
+                    />
+                  </label>
+
+                  <label>
+                    <span>Transfer mode</span>
+                    <div className="mode-toggle">
+                      <button
+                        className={mode === "folder" ? "mode-option active" : "mode-option"}
+                        onClick={() => setMode("folder")}
+                        type="button"
+                      >
+                        Specific folder
+                      </button>
+                      <button
+                        className={mode === "all" ? "mode-option active" : "mode-option"}
+                        onClick={() => setMode("all")}
+                        type="button"
+                      >
+                        Everything
+                      </button>
+                    </div>
+                  </label>
+
+                  <label>
+                    <span>Put.io path</span>
+                    <input
+                      disabled={mode === "all"}
+                      onChange={(event) => setFolderPath(event.target.value)}
+                      placeholder="/Movies"
+                      value={folderPath}
+                    />
+                  </label>
+
+                  <div className="browser-panel">
+                    <div className="section-heading compact-heading">
+                      <h3>Put.io browser</h3>
+                      <span className="small-note">
+                        {browserLoading ? "Loading" : putioBrowser.current_path}
+                      </span>
+                    </div>
+                    <div className="breadcrumb-row">
+                      {putioBrowser.breadcrumbs.map((crumb) => (
+                        <button
+                          className="breadcrumb-chip"
+                          key={crumb.path}
+                          onClick={() => handleBrowse(crumb.path)}
+                          type="button"
+                        >
+                          {crumb.name}
+                        </button>
+                      ))}
+                      {putioBrowser.parent_path && (
+                        <button
+                          className="breadcrumb-chip"
+                          onClick={() => handleBrowse(putioBrowser.parent_path ?? "/")}
+                          type="button"
+                        >
+                          Up
+                        </button>
+                      )}
+                    </div>
+                    <div className="folder-list browser-list">
+                      {putioBrowser.entries.map((entry) => (
+                        <button
+                          className={`folder-chip ${entry.path === folderPath ? "selected" : ""}`}
+                          key={entry.id}
+                          onClick={() => {
+                            setMode("folder");
+                            setFolderPath(entry.path);
+                          }}
+                          onDoubleClick={() => void handleBrowse(entry.path)}
+                          type="button"
+                        >
+                          <span>{entry.name}</span>
+                          <small>{entry.path}</small>
+                        </button>
+                      ))}
+                      {!putioBrowser.entries.length && (
+                        <p className="empty-state">
+                          {dashboard.putio_connected
+                            ? "No folders found at this level."
+                            : "Connect Put.io to browse folders."}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <label>
+                    <span>Destination path</span>
+                    <input
+                      list="destinations"
+                      onChange={(event) => setDestination(event.target.value)}
+                      placeholder="/media/staging"
+                      value={destination}
+                    />
+                    <datalist id="destinations">
+                      {dashboard.destinations.map((item) => (
+                        <option key={item} value={item} />
+                      ))}
+                    </datalist>
+                  </label>
+
+                  <div className="inline-actions">
+                    <button className="primary-button" disabled={previewLoading} type="submit">
+                      {previewLoading ? "Building preview..." : "Preview rclone plan"}
+                    </button>
+                    <button className="ghost-button" onClick={handleRunNow} type="button">
+                      Run sync now
+                    </button>
+                  </div>
+                </form>
+              </article>
+
+              <article className="panel preview-panel">
+                <div className="section-heading">
+                  <h2>Command preview</h2>
+                  <span className="small-note">What will actually run</span>
+                </div>
+
+                {preview ? (
+                  <div className="preview-content">
+                    <code>{preview.command_preview}</code>
+                    <div className="preview-block">
+                      <h3>Steps</h3>
+                      <ul>
+                        {preview.steps.map((step) => (
+                          <li key={step}>{step}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="preview-block">
+                      <h3>Warnings</h3>
+                      {preview.warnings.length ? (
+                        <ul>
+                          {preview.warnings.map((warning) => (
+                            <li key={warning}>{warning}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p>No immediate warnings.</p>
+                      )}
+                    </div>
+                    <div className="preview-block">
+                      <h3>Selected Jellyfin libraries</h3>
+                      {selectedLibraries.length ? (
+                        <ul>
+                          {selectedLibraries.map((library) => (
+                            <li key={library.id}>{library.name}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p>No specific libraries selected. Refresh remains global.</p>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="empty-preview">
+                    <p>Choose a scope and destination, then preview the generated `rclone` plan.</p>
+                  </div>
+                )}
+              </article>
+            </section>
+          </>
+        )}
+
+        {activeTab === "jellyfin" && (
+          <section className="status-grid single-panel tab-panel">
+            <article className="panel settings-panel">
+              <div className="section-heading">
+                <h2>Jellyfin hook</h2>
+                <span className="small-note">
+                  {settingsDraft.jellyfin.enabled ? "Library-aware" : "Disabled"}
+                </span>
+              </div>
+              <form className="settings-form" onSubmit={handleSaveSettings}>
+                <label className="toggle-row">
+                  <input
+                    checked={settingsDraft.jellyfin.enabled}
+                    onChange={(event) =>
                       setSettingsDraft((current) => ({
                         ...current,
-                        putio: { ...current.putio, redirect_uri: nativeRedirectUri },
+                        jellyfin: { ...current.jellyfin, enabled: event.target.checked },
                       }))
                     }
-                    type="button"
-                  >
-                    Use native callback
+                    type="checkbox"
+                  />
+                  <span>Enable Jellyfin integration</span>
+                </label>
+                <label>
+                  <span>Jellyfin base URL</span>
+                  <input
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        jellyfin: { ...current.jellyfin, base_url: event.target.value },
+                      }))
+                    }
+                    placeholder="http://192.168.1.20:8096"
+                    value={settingsDraft.jellyfin.base_url}
+                  />
+                </label>
+                <label>
+                  <span>Jellyfin API key</span>
+                  <input
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        jellyfin: { ...current.jellyfin, api_key: event.target.value },
+                      }))
+                    }
+                    type="password"
+                    value={settingsDraft.jellyfin.api_key}
+                  />
+                </label>
+                <label className="toggle-row">
+                  <input
+                    checked={settingsDraft.jellyfin.refresh_after_sync}
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        jellyfin: {
+                          ...current.jellyfin,
+                          refresh_after_sync: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>Refresh library after sync</span>
+                </label>
+                <label className="toggle-row">
+                  <input
+                    checked={settingsDraft.jellyfin.refresh_only_on_change}
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        jellyfin: {
+                          ...current.jellyfin,
+                          refresh_only_on_change: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>Only refresh when files changed</span>
+                </label>
+
+                <div className="library-picker">
+                  <div className="section-heading compact-heading">
+                    <h3>Jellyfin libraries</h3>
+                    <span className="small-note">
+                      {dashboard.jellyfin_libraries.length ? "Selectable" : "Connect to load"}
+                    </span>
+                  </div>
+                  {dashboard.jellyfin_libraries.map((library) => (
+                    <div className="library-card" key={library.id}>
+                      <label className="toggle-row">
+                        <input
+                          checked={selectedLibraryIds.has(library.id)}
+                          onChange={(event) =>
+                            handleLibraryToggle(library.id, event.target.checked)
+                          }
+                          type="checkbox"
+                        />
+                        <span>
+                          {library.name}
+                          {library.collection_type ? ` · ${library.collection_type}` : ""}
+                        </span>
+                      </label>
+                      <div className="location-list">
+                        {library.locations.map((location) => (
+                          <button
+                            className="path-chip"
+                            key={location}
+                            onClick={() => handleUseLibraryLocation(location)}
+                            type="button"
+                          >
+                            {location}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="inline-actions">
+                  <button className="primary-button" disabled={settingsSaving} type="submit">
+                    Save hook settings
                   </button>
-                  <button
-                    className="path-chip"
-                    onClick={() =>
-                      setSettingsDraft((current) => ({
-                        ...current,
-                        putio: { ...current.putio, redirect_uri: containerRedirectUri },
-                      }))
-                    }
-                    type="button"
-                  >
-                    Use container callback
+                  <button className="ghost-button" onClick={handleTestJellyfin} type="button">
+                    Test connection
                   </button>
                 </div>
                 <p className="muted-copy">
-                  Put.io does not document query-string prefills for the new app form, so this link can open
-                  the page but not reliably populate its fields for you.
+                  Use a full base URL and an admin API key. Library selection scopes your intent and
+                  path choices, but Jellyfin still exposes only a global refresh endpoint.
                 </p>
-                <div className="preview-block">
-                  <h3>Suggested Put.io app values</h3>
-                  <ul>
-                    <li>Name: `get-put.io`</li>
-                    <li>Description: `Self-hosted Put.io sync portal for Jellyfin libraries.`</li>
-                    <li>Website for native mode: `http://localhost:5173`</li>
-                    <li>Callback for native mode: `http://localhost:8000/api/auth/putio/callback`</li>
-                    <li>Callback for Docker/container mode: `http://localhost:8787/api/auth/putio/callback`</li>
-                  </ul>
-                </div>
+              </form>
+            </article>
+          </section>
+        )}
+
+        {activeTab === "jobs" && (
+          <section className="jobs-grid tab-panel">
+            <article className="panel">
+              <div className="section-heading">
+                <h2>Recurring jobs</h2>
+                <span className="small-note">
+                  {dashboard.schedules.length ? `${dashboard.schedules.length} saved` : "No schedules yet"}
+                </span>
               </div>
-              <div className="inline-actions">
-                <button className="primary-button" disabled={settingsSaving} type="submit">
-                  {settingsSaving ? "Saving..." : "Save integration settings"}
-                </button>
-                <button
-                  className="ghost-button"
-                  disabled={authBusy}
-                  onClick={dashboard.putio_connected ? handleDisconnectPutio : handleStartPutioAuth}
-                  type="button"
-                >
-                  {dashboard.putio_connected ? "Disconnect Put.io" : "Start Put.io login"}
-                </button>
-              </div>
-              <p className="muted-copy">
-                {dashboard.putio_connected
-                  ? `Connected as ${dashboard.settings.putio.account_username ?? "Put.io user"}.`
-                  : "Create a Put.io app, save the client ID and secret here, then start the browser login."}
-              </p>
-              <div className="preview-block">
-                <h3>Manual token fallback</h3>
-                <p>
-                  If you prefer, you can paste the OAuth token from Put.io's Secrets page instead of doing the
-                  browser login flow.
-                </p>
-                <div className="manual-token-row">
+
+              <form className="settings-form" onSubmit={handleSaveSchedule}>
+                <label>
+                  <span>Schedule name</span>
                   <input
-                    onChange={(event) => setManualToken(event.target.value)}
-                    placeholder="Paste Put.io OAuth token"
-                    type="password"
-                    value={manualToken}
+                    onChange={(event) =>
+                      setScheduleDraft((current) => ({ ...current, name: event.target.value }))
+                    }
+                    value={scheduleDraft.name}
                   />
-                  <button
-                    className="ghost-button small-button"
-                    disabled={manualTokenSaving || !manualToken.trim()}
-                    onClick={() => void handleSaveManualToken()}
-                    type="button"
-                  >
-                    {manualTokenSaving ? "Saving..." : "Use token"}
+                </label>
+
+                <label className="toggle-row">
+                  <input
+                    checked={scheduleDraft.enabled}
+                    onChange={(event) =>
+                      setScheduleDraft((current) => ({ ...current, enabled: event.target.checked }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>Enable recurring job</span>
+                </label>
+
+                <label>
+                  <span>Schedule type</span>
+                  <div className="mode-toggle">
+                    <button
+                      className={
+                        scheduleDraft.schedule_type === "daily"
+                          ? "mode-option active"
+                          : "mode-option"
+                      }
+                      onClick={() =>
+                        setScheduleDraft((current) => ({ ...current, schedule_type: "daily" }))
+                      }
+                      type="button"
+                    >
+                      Daily
+                    </button>
+                    <button
+                      className={
+                        scheduleDraft.schedule_type === "interval"
+                          ? "mode-option active"
+                          : "mode-option"
+                      }
+                      onClick={() =>
+                        setScheduleDraft((current) => ({ ...current, schedule_type: "interval" }))
+                      }
+                      type="button"
+                    >
+                      Interval
+                    </button>
+                  </div>
+                </label>
+
+                {scheduleDraft.schedule_type === "daily" ? (
+                  <label>
+                    <span>Daily run time</span>
+                    <input
+                      onChange={(event) =>
+                        setScheduleDraft((current) => ({
+                          ...current,
+                          daily_time: event.target.value,
+                        }))
+                      }
+                      type="time"
+                      value={scheduleDraft.daily_time}
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    <span>Interval hours</span>
+                    <input
+                      max={168}
+                      min={1}
+                      onChange={(event) =>
+                        setScheduleDraft((current) => ({
+                          ...current,
+                          interval_hours: Number(event.target.value) || 1,
+                        }))
+                      }
+                      type="number"
+                      value={scheduleDraft.interval_hours}
+                    />
+                  </label>
+                )}
+
+                <p className="muted-copy">
+                  This saves the current sync selection:{" "}
+                  {mode === "all" ? "all Put.io content" : folderPath} to {destination}.
+                </p>
+
+                <div className="inline-actions">
+                  <button className="primary-button" disabled={scheduleSaving} type="submit">
+                    {scheduleSaving
+                      ? "Saving..."
+                      : editingScheduleId
+                        ? "Update recurring job"
+                        : "Save recurring job"}
+                  </button>
+                  <button className="ghost-button" onClick={resetScheduleEditor} type="button">
+                    Clear editor
                   </button>
                 </div>
-              </div>
-            </form>
-          </article>
+              </form>
 
-          <article className="panel settings-panel">
-            <div className="section-heading">
-              <h2>Jellyfin hook</h2>
-              <span className="small-note">
-                {settingsDraft.jellyfin.enabled ? "Library-aware" : "Disabled"}
-              </span>
-            </div>
-            <form className="settings-form" onSubmit={handleSaveSettings}>
-              <label className="toggle-row">
-                <input
-                  checked={settingsDraft.jellyfin.enabled}
-                  onChange={(event) =>
-                    setSettingsDraft((current) => ({
-                      ...current,
-                      jellyfin: { ...current.jellyfin, enabled: event.target.checked },
-                    }))
-                  }
-                  type="checkbox"
-                />
-                <span>Enable Jellyfin integration</span>
-              </label>
-              <label>
-                <span>Jellyfin base URL</span>
-                <input
-                  onChange={(event) =>
-                    setSettingsDraft((current) => ({
-                      ...current,
-                      jellyfin: { ...current.jellyfin, base_url: event.target.value },
-                    }))
-                  }
-                  placeholder="http://192.168.1.20:8096"
-                  value={settingsDraft.jellyfin.base_url}
-                />
-              </label>
-              <label>
-                <span>Jellyfin API key</span>
-                <input
-                  onChange={(event) =>
-                    setSettingsDraft((current) => ({
-                      ...current,
-                      jellyfin: { ...current.jellyfin, api_key: event.target.value },
-                    }))
-                  }
-                  type="password"
-                  value={settingsDraft.jellyfin.api_key}
-                />
-              </label>
-              <label className="toggle-row">
-                <input
-                  checked={settingsDraft.jellyfin.refresh_after_sync}
-                  onChange={(event) =>
-                    setSettingsDraft((current) => ({
-                      ...current,
-                      jellyfin: {
-                        ...current.jellyfin,
-                        refresh_after_sync: event.target.checked,
-                      },
-                    }))
-                  }
-                  type="checkbox"
-                />
-                <span>Refresh library after sync</span>
-              </label>
-              <label className="toggle-row">
-                <input
-                  checked={settingsDraft.jellyfin.refresh_only_on_change}
-                  onChange={(event) =>
-                    setSettingsDraft((current) => ({
-                      ...current,
-                      jellyfin: {
-                        ...current.jellyfin,
-                        refresh_only_on_change: event.target.checked,
-                      },
-                    }))
-                  }
-                  type="checkbox"
-                />
-                <span>Only refresh when files changed</span>
-              </label>
-
-              <div className="library-picker">
-                <div className="section-heading compact-heading">
-                  <h3>Jellyfin libraries</h3>
-                  <span className="small-note">
-                    {dashboard.jellyfin_libraries.length ? "Selectable" : "Connect to load"}
-                  </span>
-                </div>
-                {dashboard.jellyfin_libraries.map((library) => (
-                  <div className="library-card" key={library.id}>
-                    <label className="toggle-row">
-                      <input
-                        checked={selectedLibraryIds.has(library.id)}
-                        onChange={(event) => handleLibraryToggle(library.id, event.target.checked)}
-                        type="checkbox"
-                      />
-                      <span>
-                        {library.name}
-                        {library.collection_type ? ` · ${library.collection_type}` : ""}
+              <div className="jobs-list schedule-list">
+                {dashboard.schedules.map((schedule) => (
+                  <div className="job-row schedule-row" key={schedule.id}>
+                    <div>
+                      <strong>{schedule.name}</strong>
+                      <p>
+                        {schedule.mode === "all" ? "Full library" : schedule.folder_path} to{" "}
+                        {schedule.destination_path}
+                      </p>
+                      <p>
+                        {schedule.schedule_type === "daily"
+                          ? `Daily at ${schedule.daily_time}`
+                          : `Every ${schedule.interval_hours} hour${schedule.interval_hours === 1 ? "" : "s"}`}
+                      </p>
+                      <p>
+                        Next run: {schedule.next_run_at ?? "disabled"} · Last run:{" "}
+                        {schedule.last_run_at ?? "never"}
+                      </p>
+                    </div>
+                    <div className="row-actions">
+                      <span className={schedule.enabled ? "status-pill online" : "status-pill muted"}>
+                        {schedule.enabled ? "enabled" : "paused"}
                       </span>
-                    </label>
-                    <div className="location-list">
-                      {library.locations.map((location) => (
-                        <button
-                          className="path-chip"
-                          key={location}
-                          onClick={() => handleUseLibraryLocation(location)}
-                          type="button"
-                        >
-                          {location}
-                        </button>
-                      ))}
+                      <button
+                        className="ghost-button small-button"
+                        onClick={() => handleEditSchedule(schedule)}
+                        type="button"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="ghost-button small-button"
+                        onClick={() => void handleRunSchedule(schedule.id)}
+                        type="button"
+                      >
+                        Run now
+                      </button>
+                      <button
+                        className="ghost-button small-button"
+                        onClick={() => void handleDeleteSchedule(schedule.id)}
+                        type="button"
+                      >
+                        Delete
+                      </button>
                     </div>
                   </div>
                 ))}
+                {!dashboard.schedules.length && (
+                  <p className="empty-state">
+                    Save the current sync selection as a recurring job to schedule it.
+                  </p>
+                )}
               </div>
+            </article>
 
-              <div className="inline-actions">
-                <button className="primary-button" disabled={settingsSaving} type="submit">
-                  Save hook settings
-                </button>
-                <button className="ghost-button" onClick={handleTestJellyfin} type="button">
-                  Test connection
-                </button>
+            <article className="panel">
+              <div className="section-heading">
+                <h2>Recent jobs</h2>
+                <span className="small-note">{loading ? "Loading" : "Polling every 3s"}</span>
               </div>
-              <p className="muted-copy">
-                Use a full base URL and an admin API key. Library selection scopes your intent and path
-                choices, but Jellyfin still exposes only a global refresh endpoint.
-              </p>
-            </form>
-          </article>
-        </section>
-
-        <section className="workspace-grid">
-          <article className="panel composer-panel">
-            <div className="section-heading">
-              <h2>Compose a sync</h2>
-              <span className="small-note">Preview first</span>
-            </div>
-
-            <form className="sync-form" onSubmit={handlePreview}>
-              <label>
-                <span>Default destination path</span>
-                <input
-                  onChange={(event) =>
-                    setSettingsDraft((current) => ({
-                      ...current,
-                      sync_defaults: { destination_path: event.target.value },
-                    }))
-                  }
-                  value={settingsDraft.sync_defaults.destination_path}
-                />
-              </label>
-
-              <label>
-                <span>Transfer mode</span>
-                <div className="mode-toggle">
-                  <button
-                    className={mode === "folder" ? "mode-option active" : "mode-option"}
-                    onClick={() => setMode("folder")}
-                    type="button"
-                  >
-                    Specific folder
-                  </button>
-                  <button
-                    className={mode === "all" ? "mode-option active" : "mode-option"}
-                    onClick={() => setMode("all")}
-                    type="button"
-                  >
-                    Everything
-                  </button>
-                </div>
-              </label>
-
-              <label>
-                <span>Put.io path</span>
-                <input
-                  disabled={mode === "all"}
-                  onChange={(event) => setFolderPath(event.target.value)}
-                  placeholder="/Movies"
-                  value={folderPath}
-                />
-              </label>
-
-              <div className="browser-panel">
-                <div className="section-heading compact-heading">
-                  <h3>Put.io browser</h3>
-                  <span className="small-note">{browserLoading ? "Loading" : putioBrowser.current_path}</span>
-                </div>
-                <div className="breadcrumb-row">
-                  {putioBrowser.breadcrumbs.map((crumb) => (
-                    <button
-                      className="breadcrumb-chip"
-                      key={crumb.path}
-                      onClick={() => handleBrowse(crumb.path)}
-                      type="button"
+              <div className="jobs-list">
+                {jobs.map((job) => (
+                  <div className="job-row" key={job.id}>
+                    <div>
+                      <strong>{job.label}</strong>
+                      <p>
+                        {job.mode === "all" ? "Full library" : job.folder_path} to{" "}
+                        {job.destination_path}
+                      </p>
+                    </div>
+                    <span
+                      className={job.status === "completed" ? "status-pill online" : "status-pill muted"}
                     >
-                      {crumb.name}
-                    </button>
-                  ))}
-                  {putioBrowser.parent_path && (
-                    <button
-                      className="breadcrumb-chip"
-                      onClick={() => handleBrowse(putioBrowser.parent_path ?? "/")}
-                      type="button"
-                    >
-                      Up
-                    </button>
-                  )}
-                </div>
-                <div className="folder-list browser-list">
-                  {putioBrowser.entries.map((entry) => (
-                    <button
-                      className={`folder-chip ${entry.path === folderPath ? "selected" : ""}`}
-                      key={entry.id}
-                      onClick={() => {
-                        setMode("folder");
-                        setFolderPath(entry.path);
-                      }}
-                      onDoubleClick={() => void handleBrowse(entry.path)}
-                      type="button"
-                    >
-                      <span>{entry.name}</span>
-                      <small>{entry.path}</small>
-                    </button>
-                  ))}
-                  {!putioBrowser.entries.length && (
-                    <p className="empty-state">
-                      {dashboard.putio_connected
-                        ? "No folders found at this level."
-                        : "Connect Put.io to browse folders."}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <label>
-                <span>Destination path</span>
-                <input
-                  list="destinations"
-                  onChange={(event) => setDestination(event.target.value)}
-                  placeholder="/media/staging"
-                  value={destination}
-                />
-                <datalist id="destinations">
-                  {dashboard.destinations.map((item) => (
-                    <option key={item} value={item} />
-                  ))}
-                </datalist>
-              </label>
-
-              <div className="inline-actions">
-                <button className="primary-button" disabled={previewLoading} type="submit">
-                  {previewLoading ? "Building preview..." : "Preview rclone plan"}
-                </button>
-                <button className="ghost-button" onClick={handleRunNow} type="button">
-                  Run sync now
-                </button>
-              </div>
-            </form>
-
-            {previewError && <p className="error-banner">{previewError}</p>}
-            {error && <p className="error-banner">{error}</p>}
-            {runError && <p className="error-banner">{runError}</p>}
-            {settingsError && <p className="error-banner">{settingsError}</p>}
-            {settingsSaved && <p className="success-banner">{settingsSaved}</p>}
-            {jellyfinMessage && <p className="success-banner">{jellyfinMessage}</p>}
-          </article>
-
-          <article className="panel preview-panel">
-            <div className="section-heading">
-              <h2>Command preview</h2>
-              <span className="small-note">What will actually run</span>
-            </div>
-
-            {preview ? (
-              <div className="preview-content">
-                <code>{preview.command_preview}</code>
-                <div className="preview-block">
-                  <h3>Steps</h3>
-                  <ul>
-                    {preview.steps.map((step) => (
-                      <li key={step}>{step}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="preview-block">
-                  <h3>Warnings</h3>
-                  {preview.warnings.length ? (
-                    <ul>
-                      {preview.warnings.map((warning) => (
-                        <li key={warning}>{warning}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p>No immediate warnings.</p>
-                  )}
-                </div>
-                <div className="preview-block">
-                  <h3>Selected Jellyfin libraries</h3>
-                  {selectedLibraries.length ? (
-                    <ul>
-                      {selectedLibraries.map((library) => (
-                        <li key={library.id}>{library.name}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p>No specific libraries selected. Refresh remains global.</p>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="empty-preview">
-                <p>Choose a scope and destination, then preview the generated `rclone` plan.</p>
-              </div>
-            )}
-          </article>
-        </section>
-
-        <section className="jobs-grid">
-          <article className="panel">
-            <div className="section-heading">
-              <h2>Recurring jobs</h2>
-              <span className="small-note">
-                {dashboard.schedules.length ? `${dashboard.schedules.length} saved` : "No schedules yet"}
-              </span>
-            </div>
-
-            <form className="settings-form" onSubmit={handleSaveSchedule}>
-              <label>
-                <span>Schedule name</span>
-                <input
-                  onChange={(event) =>
-                    setScheduleDraft((current) => ({ ...current, name: event.target.value }))
-                  }
-                  value={scheduleDraft.name}
-                />
-              </label>
-
-              <label className="toggle-row">
-                <input
-                  checked={scheduleDraft.enabled}
-                  onChange={(event) =>
-                    setScheduleDraft((current) => ({ ...current, enabled: event.target.checked }))
-                  }
-                  type="checkbox"
-                />
-                <span>Enable recurring job</span>
-              </label>
-
-              <label>
-                <span>Schedule type</span>
-                <div className="mode-toggle">
-                  <button
-                    className={
-                      scheduleDraft.schedule_type === "daily" ? "mode-option active" : "mode-option"
-                    }
-                    onClick={() =>
-                      setScheduleDraft((current) => ({ ...current, schedule_type: "daily" }))
-                    }
-                    type="button"
-                  >
-                    Daily
-                  </button>
-                  <button
-                    className={
-                      scheduleDraft.schedule_type === "interval"
-                        ? "mode-option active"
-                        : "mode-option"
-                    }
-                    onClick={() =>
-                      setScheduleDraft((current) => ({ ...current, schedule_type: "interval" }))
-                    }
-                    type="button"
-                  >
-                    Interval
-                  </button>
-                </div>
-              </label>
-
-              {scheduleDraft.schedule_type === "daily" ? (
-                <label>
-                  <span>Daily run time</span>
-                  <input
-                    onChange={(event) =>
-                      setScheduleDraft((current) => ({ ...current, daily_time: event.target.value }))
-                    }
-                    type="time"
-                    value={scheduleDraft.daily_time}
-                  />
-                </label>
-              ) : (
-                <label>
-                  <span>Interval hours</span>
-                  <input
-                    min={1}
-                    max={168}
-                    onChange={(event) =>
-                      setScheduleDraft((current) => ({
-                        ...current,
-                        interval_hours: Number(event.target.value) || 1,
-                      }))
-                    }
-                    type="number"
-                    value={scheduleDraft.interval_hours}
-                  />
-                </label>
-              )}
-
-              <p className="muted-copy">
-                This saves the current sync selection: {mode === "all" ? "all Put.io content" : folderPath} to{" "}
-                {destination}.
-              </p>
-
-              <div className="inline-actions">
-                <button className="primary-button" disabled={scheduleSaving} type="submit">
-                  {scheduleSaving
-                    ? "Saving..."
-                    : editingScheduleId
-                      ? "Update recurring job"
-                      : "Save recurring job"}
-                </button>
-                <button className="ghost-button" onClick={resetScheduleEditor} type="button">
-                  Clear editor
-                </button>
-              </div>
-            </form>
-
-            {scheduleError && <p className="error-banner">{scheduleError}</p>}
-            {scheduleMessage && <p className="success-banner">{scheduleMessage}</p>}
-
-            <div className="jobs-list schedule-list">
-              {dashboard.schedules.map((schedule) => (
-                <div className="job-row schedule-row" key={schedule.id}>
-                  <div>
-                    <strong>{schedule.name}</strong>
-                    <p>
-                      {schedule.mode === "all" ? "Full library" : schedule.folder_path} to{" "}
-                      {schedule.destination_path}
-                    </p>
-                    <p>
-                      {schedule.schedule_type === "daily"
-                        ? `Daily at ${schedule.daily_time}`
-                        : `Every ${schedule.interval_hours} hour${schedule.interval_hours === 1 ? "" : "s"}`}
-                    </p>
-                    <p>
-                      Next run: {schedule.next_run_at ?? "disabled"} · Last run: {schedule.last_run_at ?? "never"}
-                    </p>
-                  </div>
-                  <div className="row-actions">
-                    <span className={schedule.enabled ? "status-pill online" : "status-pill muted"}>
-                      {schedule.enabled ? "enabled" : "paused"}
+                      {job.status}
                     </span>
-                    <button className="ghost-button small-button" onClick={() => handleEditSchedule(schedule)} type="button">
-                      Edit
-                    </button>
-                    <button className="ghost-button small-button" onClick={() => void handleRunSchedule(schedule.id)} type="button">
-                      Run now
-                    </button>
-                    <button className="ghost-button small-button" onClick={() => void handleDeleteSchedule(schedule.id)} type="button">
-                      Delete
-                    </button>
                   </div>
-                </div>
-              ))}
-              {!dashboard.schedules.length && (
-                <p className="empty-state">Save the current sync selection as a recurring job to schedule it.</p>
-              )}
-            </div>
-          </article>
-
-          <article className="panel">
-            <div className="section-heading">
-              <h2>Recent jobs</h2>
-              <span className="small-note">{loading ? "Loading" : "Polling every 3s"}</span>
-            </div>
-            <div className="jobs-list">
-              {jobs.map((job) => (
-                <div className="job-row" key={job.id}>
-                  <div>
-                    <strong>{job.label}</strong>
-                    <p>
-                      {job.mode === "all" ? "Full library" : job.folder_path} to {job.destination_path}
-                    </p>
-                  </div>
-                  <span
-                    className={job.status === "completed" ? "status-pill online" : "status-pill muted"}
-                  >
-                    {job.status}
-                  </span>
-                </div>
-              ))}
-            </div>
-            {selectedJob && (
-              <div className="preview-block">
-                <h3>Latest job log</h3>
-                <code className="log-block">
-                  {selectedJob.log_lines.length
-                    ? selectedJob.log_lines.join("\n")
-                    : selectedJob.command_preview}
-                </code>
+                ))}
               </div>
-            )}
-          </article>
-        </section>
+              {selectedJob && (
+                <div className="preview-block">
+                  <h3>Latest job log</h3>
+                  <code className="log-block">
+                    {selectedJob.log_lines.length
+                      ? selectedJob.log_lines.join("\n")
+                      : selectedJob.command_preview}
+                  </code>
+                </div>
+              )}
+            </article>
+          </section>
+        )}
       </main>
     </div>
   );
