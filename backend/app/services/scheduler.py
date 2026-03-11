@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import logging
 import threading
-import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -17,6 +17,9 @@ from app.services.state import StateStore, get_state_store
 
 def _parse_iso(value: str) -> datetime:
     return datetime.fromisoformat(value)
+
+
+logger = logging.getLogger(__name__)
 
 
 class SchedulerService:
@@ -153,6 +156,7 @@ class SchedulerService:
                     try:
                         self.trigger_schedule(schedule.id)
                     except Exception:
+                        logger.exception("Failed to trigger schedule %s", schedule.id)
                         continue
             finally:
                 self._stop_event.wait(self.settings.scheduler_poll_seconds)

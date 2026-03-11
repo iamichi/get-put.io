@@ -26,7 +26,7 @@ class PutioService:
     def connection_status(self) -> ConnectionStatus:
         connected = self.state.settings.putio.token is not None
         summary = (
-            f"Connected as {self.state.settings.putio.account_username}."
+            f"Connected as {self.state.settings.putio.account_username or 'Put.io user'}."
             if connected
             else "No Put.io session configured yet."
         )

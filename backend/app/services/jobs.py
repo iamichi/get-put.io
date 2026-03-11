@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import threading
@@ -20,6 +21,12 @@ from app.services.state import StateStore
 class JobService:
     _lock = threading.RLock()
     _processes: dict[str, subprocess.Popen[str]] = {}
+    _changed_line_patterns = (
+        re.compile(r":\s+Copied\s+\("),
+        re.compile(r":\s+Copied\b"),
+        re.compile(r":\s+Moved\b"),
+        re.compile(r":\s+Updated\b"),
+    )
 
     def __init__(self, settings: Settings, state_store: StateStore) -> None:
         self.settings = settings
@@ -160,7 +167,7 @@ class JobService:
             cleaned = line.rstrip()
             if not cleaned:
                 continue
-            if "Copied (new)" in cleaned or "Transferred:" in cleaned or "Checks:" in cleaned:
+            if self._line_indicates_file_change(cleaned):
                 files_changed = True
             self._append_log(job_id, cleaned)
 
@@ -209,6 +216,10 @@ class JobService:
             job.log_lines = job.log_lines[-200:]
 
         self.state_store.mutate(mutate)
+
+    @classmethod
+    def _line_indicates_file_change(cls, line: str) -> bool:
+        return any(pattern.search(line) for pattern in cls._changed_line_patterns)
 
     def _finish_failed(self, job_id: str, message: str) -> None:
         def mutate(state: AppState) -> None:

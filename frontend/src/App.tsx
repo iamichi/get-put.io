@@ -109,12 +109,17 @@ export default function App() {
   const [manualTokenSaving, setManualTokenSaving] = useState(false);
   const seededRef = useRef(false);
   const browserPathRef = useRef("/");
+  const dashboardLoadRef = useRef(false);
   const legacyDefaultDestination = "/media/staging";
 
   useEffect(() => {
     let active = true;
 
     async function load() {
+      if (dashboardLoadRef.current) {
+        return;
+      }
+      dashboardLoadRef.current = true;
       try {
         const [dashboardResult, jobsResult] = await Promise.all([fetchDashboard(), fetchJobs()]);
         if (!active) {
@@ -165,6 +170,7 @@ export default function App() {
         }
         setError(loadError instanceof Error ? loadError.message : "Unable to load the dashboard.");
       } finally {
+        dashboardLoadRef.current = false;
         if (active) {
           setLoading(false);
         }
@@ -173,6 +179,9 @@ export default function App() {
 
     void load();
     const timer = window.setInterval(() => {
+      if (dashboardLoadRef.current) {
+        return;
+      }
       void load();
     }, 3000);
 

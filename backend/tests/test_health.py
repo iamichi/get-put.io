@@ -1,3 +1,4 @@
+import stat
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -5,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.config import get_settings
 from app.main import app, resolve_static_asset
 from app.models.state import PutioToken, SyncJobRecord, utc_now
+from app.services.jobs import JobService
 from app.services.putio import PutioService
 from app.services.scheduler import get_scheduler_service
 from app.services.state import get_state_store
@@ -205,6 +207,19 @@ def test_putio_callback_returns_to_frontend_url(monkeypatch, tmp_path: Path) -> 
     assert 'href="http://localhost:5173"' in response.text
 
 
+def test_putio_callback_requires_non_empty_state(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GET_PUTIO_STATE_PATH", str(tmp_path / "state.json"))
+    get_settings.cache_clear()
+    get_state_store.cache_clear()
+    get_scheduler_service.cache_clear()
+
+    client = TestClient(app)
+    response = client.get("/api/auth/putio/callback?code=oauth-code")
+
+    assert response.status_code == 400
+    assert "Invalid state token." in response.text
+
+
 def test_settings_and_dashboard_redact_credentials(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("GET_PUTIO_STATE_PATH", str(tmp_path / "state.json"))
     get_settings.cache_clear()
@@ -308,6 +323,41 @@ def test_resolve_static_asset_rejects_traversal(tmp_path: Path) -> None:
 
     assert resolve_static_asset(static_root, "index.html") == asset.resolve()
     assert resolve_static_asset(static_root, "../secret.txt") is None
+
+
+def test_state_store_writes_secret_file_permissions(monkeypatch, tmp_path: Path) -> None:
+    state_path = tmp_path / "data" / "state.json"
+    monkeypatch.setenv("GET_PUTIO_STATE_PATH", str(state_path))
+    get_settings.cache_clear()
+    get_state_store.cache_clear()
+    get_scheduler_service.cache_clear()
+
+    store = get_state_store()
+    store.mutate(lambda state: setattr(state.settings.putio, "app_id", "1234"))
+
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(state_path.parent.stat().st_mode) == 0o700
+
+
+def test_putio_connection_status_handles_missing_username(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GET_PUTIO_STATE_PATH", str(tmp_path / "state.json"))
+    get_settings.cache_clear()
+    get_state_store.cache_clear()
+    get_scheduler_service.cache_clear()
+
+    snapshot = get_state_store().snapshot()
+    snapshot.settings.putio.token = PutioToken(access_token="token", token_type="Bearer")
+
+    status = PutioService(get_settings(), snapshot).connection_status()
+
+    assert status.connected is True
+    assert status.summary == "Connected as Put.io user."
+
+
+def test_job_change_detector_ignores_zero_transfer_stats() -> None:
+    assert JobService._line_indicates_file_change("movie.mkv: Copied (new)") is True
+    assert JobService._line_indicates_file_change("Transferred: 0 B / 0 B, -, 0 B/s, ETA -") is False
+    assert JobService._line_indicates_file_change("Checks: 3 / 3, 100%") is False
 
 
 def test_cancel_running_job(monkeypatch, tmp_path: Path) -> None:

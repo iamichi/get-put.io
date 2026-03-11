@@ -234,7 +234,13 @@ def putio_callback(
         return oauth_error_page(error)
 
     current = store.snapshot()
-    if state != current.settings.putio.oauth_state:
+    stored_state = current.settings.putio.oauth_state
+    if not state or not stored_state or state != stored_state:
+        if stored_state is not None:
+            def clear_oauth_state(state_model: AppState) -> None:
+                state_model.settings.putio.oauth_state = None
+
+            store.mutate(clear_oauth_state)
         return oauth_error_page("Invalid state token.")
     if code is None:
         return oauth_error_page("No code returned.")

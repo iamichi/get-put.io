@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from threading import RLock
@@ -18,6 +19,7 @@ class StateStore:
         self.path = settings.state_path
         self.lock = RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.path.parent, 0o700)
         self._state = self._load()
 
     def _load(self) -> AppState:
@@ -26,12 +28,19 @@ class StateStore:
             self._save(state)
             return state
 
+        os.chmod(self.path, 0o600)
         raw = json.loads(self.path.read_text())
         return AppState.model_validate(raw)
 
     def _save(self, state: AppState) -> None:
         state.touch()
-        self.path.write_text(state.model_dump_json(indent=2))
+        payload = state.model_dump_json(indent=2).encode()
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+        finally:
+            os.chmod(self.path, 0o600)
 
     def snapshot(self) -> AppState:
         with self.lock:
