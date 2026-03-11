@@ -13,6 +13,10 @@ from app.models.state import AppState, CleanupRunRecord
 from app.services.state import StateStore
 
 
+class StorageCleanupError(ValueError):
+    pass
+
+
 @dataclass
 class CleanupCandidate:
     path: Path
@@ -82,8 +86,12 @@ class StorageCleanupService:
             run.started_at = datetime.now(timezone.utc).isoformat()
 
         self.state_store.mutate(mark_running)
-        snapshot = self.state_store.snapshot()
-        plan = self._build_plan(snapshot)
+        try:
+            snapshot = self.state_store.snapshot()
+            plan = self._build_plan(snapshot)
+        except Exception as exc:
+            self._fail_run(run_id, f"Cleanup failed before deletion started: {exc}")
+            return
 
         deleted_files = 0
         reclaimed_bytes = 0
@@ -150,6 +158,19 @@ class StorageCleanupService:
 
         self.state_store.mutate(complete)
 
+    def _fail_run(self, run_id: str, error_message: str) -> None:
+        def fail(state: AppState) -> None:
+            run = state.get_cleanup_run(run_id)
+            if run is None:
+                return
+            run.status = "failed"
+            run.finished_at = datetime.now(timezone.utc).isoformat()
+            run.error_message = error_message
+            run.log_lines = [error_message]
+            state.touch()
+
+        self.state_store.mutate(fail)
+
     def _preview_response(self, plan: CleanupPlan) -> CleanupPreviewResponse:
         sample_paths = [str(candidate.path) for candidate in plan.selected_candidates[:5]]
         return CleanupPreviewResponse(
@@ -170,7 +191,7 @@ class StorageCleanupService:
 
     def _build_plan(self, state: AppState) -> CleanupPlan:
         cleanup = state.settings.storage_cleanup
-        storage_root = self.settings.storage_path.expanduser().resolve(strict=False)
+        storage_root = self._storage_root()
         free_percent = self._free_percent(storage_root)
 
         if not cleanup.enabled:
@@ -233,8 +254,19 @@ class StorageCleanupService:
 
     @staticmethod
     def _disk_usage(path: Path) -> tuple[int, int, int]:
-        disk = shutil.disk_usage(path)
+        try:
+            disk = shutil.disk_usage(path)
+        except FileNotFoundError as exc:
+            raise StorageCleanupError(f"Storage root does not exist: {path}") from exc
         return disk.total, disk.used, disk.free
+
+    def _storage_root(self) -> Path:
+        storage_root = self.settings.storage_path.expanduser().resolve(strict=False)
+        if not storage_root.exists():
+            raise StorageCleanupError(f"Storage root does not exist: {storage_root}")
+        if not storage_root.is_dir():
+            raise StorageCleanupError(f"Storage root is not a directory: {storage_root}")
+        return storage_root
 
     def should_run_scheduled_cleanup(self, state: AppState) -> bool:
         cleanup = state.settings.storage_cleanup

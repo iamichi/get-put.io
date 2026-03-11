@@ -35,7 +35,7 @@ from app.services.paths import normalize_destination_path
 from app.services.putio import PutioService
 from app.services.scheduler import SchedulerService, get_scheduler_service
 from app.services.state import StateStore, get_state_store
-from app.services.storage_cleanup import StorageCleanupService
+from app.services.storage_cleanup import StorageCleanupError, StorageCleanupService
 from app.models.state import utc_now
 
 router = APIRouter(prefix="/api")
@@ -62,10 +62,16 @@ def redact_settings(settings_model):
     return safe_settings
 
 
-def validate_cleanup_settings(settings: Settings, payload_settings) -> None:
+def validate_cleanup_settings(settings: Settings, payload_settings, scheduler: SchedulerService) -> None:
     cleanup = payload_settings.storage_cleanup
     if cleanup.target_free_percent <= cleanup.threshold_free_percent:
         raise ValueError("Cleanup target free space must be greater than the cleanup threshold.")
+    if cleanup.schedule_type == "daily":
+        scheduler.compute_next_run_from_parts(
+            schedule_type=cleanup.schedule_type,
+            interval_hours=cleanup.interval_hours,
+            daily_time=cleanup.daily_time,
+        )
     normalized_excludes: list[str] = []
     for path in cleanup.exclude_paths:
         if not path.strip():
@@ -208,7 +214,7 @@ def save_settings(
                 settings,
                 payload.settings.sync_defaults.destination_path,
             )
-        validate_cleanup_settings(settings, payload.settings)
+        validate_cleanup_settings(settings, payload.settings, scheduler)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -384,7 +390,10 @@ def preview_cleanup(
     settings: Settings = Depends(settings_dependency),
     store: StateStore = Depends(state_store_dependency),
 ) -> CleanupPreviewResponse:
-    return StorageCleanupService(settings, store).preview()
+    try:
+        return StorageCleanupService(settings, store).preview()
+    except StorageCleanupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/storage/cleanup/run", response_model=CleanupRunResponse)
@@ -392,7 +401,10 @@ def run_cleanup(
     settings: Settings = Depends(settings_dependency),
     store: StateStore = Depends(state_store_dependency),
 ) -> CleanupRunResponse:
-    run = StorageCleanupService(settings, store).start_run(triggered_by="manual")
+    try:
+        run = StorageCleanupService(settings, store).start_run(triggered_by="manual")
+    except StorageCleanupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return CleanupRunResponse.model_validate(run.model_dump())
 
 

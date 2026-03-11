@@ -403,6 +403,63 @@ def test_settings_reject_cleanup_target_below_threshold(monkeypatch, tmp_path: P
     assert response.json()["detail"] == "Cleanup target free space must be greater than the cleanup threshold."
 
 
+def test_settings_reject_invalid_cleanup_daily_time_without_persisting(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GET_PUTIO_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setenv("GET_PUTIO_STORAGE_PATH", str(tmp_path / "media"))
+    get_settings.cache_clear()
+    get_state_store.cache_clear()
+    get_scheduler_service.cache_clear()
+
+    client = TestClient(app)
+    response = client.put(
+        "/api/settings",
+        json={
+            "settings": {
+                "putio": {
+                    "app_id": "",
+                    "client_secret": "",
+                    "redirect_uri": "http://localhost:8000/api/auth/putio/callback",
+                    "token": None,
+                    "oauth_state": None,
+                    "account_username": None,
+                    "account_user_id": None,
+                    "connected_at": None,
+                },
+                "jellyfin": {
+                    "enabled": False,
+                    "base_url": "",
+                    "api_key": "",
+                    "refresh_after_sync": True,
+                    "refresh_only_on_change": True,
+                    "selected_library_ids": [],
+                },
+                "sync_defaults": {
+                    "destination_path": "",
+                    "deletion_policy": "keep_local",
+                },
+                "storage_cleanup": {
+                    "enabled": True,
+                    "threshold_free_percent": 15,
+                    "target_free_percent": 25,
+                    "min_age_days": 30,
+                    "exclude_paths": [],
+                    "schedule_enabled": True,
+                    "schedule_type": "daily",
+                    "interval_hours": 24,
+                    "daily_time": "bogus",
+                },
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Daily time must use HH:MM in 24-hour time."
+
+    saved_state = get_state_store().snapshot()
+    assert saved_state.settings.storage_cleanup.daily_time == "04:00"
+    assert saved_state.cleanup_schedule.next_run_at is None
+
+
 def test_cleanup_preview_respects_cleanup_policy(monkeypatch, tmp_path: Path) -> None:
     storage_root = tmp_path / "media"
     library = storage_root / "library"
@@ -441,6 +498,32 @@ def test_cleanup_preview_respects_cleanup_policy(monkeypatch, tmp_path: Path) ->
     assert payload["estimated_files_to_delete"] == 1
     assert payload["candidate_count"] == 1
     assert payload["sample_paths"] == [str(old_file.resolve())]
+
+
+def test_cleanup_preview_and_run_reject_missing_storage_root(monkeypatch, tmp_path: Path) -> None:
+    missing_root = tmp_path / "missing-media"
+    monkeypatch.setenv("GET_PUTIO_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setenv("GET_PUTIO_STORAGE_PATH", str(missing_root))
+    get_settings.cache_clear()
+    get_state_store.cache_clear()
+    get_scheduler_service.cache_clear()
+
+    store = get_state_store()
+
+    def seed_cleanup_settings(state) -> None:
+        state.settings.storage_cleanup.enabled = True
+        state.settings.storage_cleanup.schedule_enabled = False
+
+    store.mutate(seed_cleanup_settings)
+
+    client = TestClient(app)
+    preview_response = client.get("/api/storage/cleanup/preview")
+    run_response = client.post("/api/storage/cleanup/run")
+
+    assert preview_response.status_code == 400
+    assert preview_response.json()["detail"] == f"Storage root does not exist: {missing_root}"
+    assert run_response.status_code == 400
+    assert run_response.json()["detail"] == f"Storage root does not exist: {missing_root}"
 
 
 def test_resolve_static_asset_rejects_traversal(tmp_path: Path) -> None:

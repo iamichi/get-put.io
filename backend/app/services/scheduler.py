@@ -23,6 +23,18 @@ def _parse_iso(value: str) -> datetime:
 logger = logging.getLogger(__name__)
 
 
+def validate_daily_time(value: str) -> tuple[int, int]:
+    try:
+        hour_text, minute_text = value.split(":", maxsplit=1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+    except ValueError as exc:
+        raise ValueError("Daily time must use HH:MM in 24-hour time.") from exc
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError("Daily time must use HH:MM in 24-hour time.")
+    return hour, minute
+
+
 class SchedulerService:
     def __init__(self, settings: Settings, state_store: StateStore) -> None:
         self.settings = settings
@@ -165,7 +177,10 @@ class SchedulerService:
                     except Exception:
                         logger.exception("Failed to trigger schedule %s", schedule.id)
                         continue
-                self._run_due_cleanup()
+                try:
+                    self._run_due_cleanup()
+                except Exception:
+                    logger.exception("Failed to run due storage cleanup")
             finally:
                 self._stop_event.wait(self.settings.scheduler_poll_seconds)
 
@@ -187,11 +202,15 @@ class SchedulerService:
             if not cleanup.enabled or not cleanup.schedule_enabled:
                 state.cleanup_schedule.next_run_at = None
                 return
-            state.cleanup_schedule.next_run_at = self.compute_next_run_from_parts(
-                schedule_type=cleanup.schedule_type,
-                interval_hours=cleanup.interval_hours,
-                daily_time=cleanup.daily_time,
-            ).isoformat()
+            try:
+                state.cleanup_schedule.next_run_at = self.compute_next_run_from_parts(
+                    schedule_type=cleanup.schedule_type,
+                    interval_hours=cleanup.interval_hours,
+                    daily_time=cleanup.daily_time,
+                ).isoformat()
+            except ValueError:
+                logger.exception("Invalid cleanup schedule configuration; disabling next cleanup run.")
+                state.cleanup_schedule.next_run_at = None
 
         self.state_store.mutate(mutate)
 
@@ -252,8 +271,8 @@ class SchedulerService:
         if schedule_type == "interval":
             return (anchor + timedelta(hours=max(interval_hours, 1))).astimezone(timezone.utc)
 
-        hour_text, minute_text = daily_time.split(":", maxsplit=1)
-        candidate = anchor.replace(hour=int(hour_text), minute=int(minute_text), second=0, microsecond=0)
+        hour, minute = validate_daily_time(daily_time)
+        candidate = anchor.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if candidate <= anchor:
             candidate += timedelta(days=1)
         return candidate.astimezone(timezone.utc)
