@@ -1,0 +1,13 @@
+services:
+  get-putio:
+    build:
+      context: .
+    container_name: get-putio
+    env_file:
+      - .env
+    ports:
+      - "8787:8000"
+    volumes:
+      - ./data/media:/media
+    restart: unless-stopped
+
