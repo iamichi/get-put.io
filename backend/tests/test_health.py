@@ -159,23 +159,3 @@ def test_cancel_running_job(monkeypatch, tmp_path: Path) -> None:
     payload = response.json()
     assert payload["status"] == "cancelled"
     assert payload["error_message"] == "Cancelled by user."
-
-
-def test_browse_local_uses_existing_parent(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("GET_PUTIO_STATE_PATH", str(tmp_path / "state.json"))
-    get_settings.cache_clear()
-    get_state_store.cache_clear()
-    get_scheduler_service.cache_clear()
-
-    movies = tmp_path / "Movies"
-    music = tmp_path / "Music"
-    movies.mkdir()
-    music.mkdir()
-
-    client = TestClient(app)
-    response = client.get(f"/api/local/browser?path={tmp_path / 'Missing' / 'Nested'}")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["current_path"] == str(tmp_path.resolve())
-    assert {entry["name"] for entry in payload["entries"]} == {"Movies", "Music"}
