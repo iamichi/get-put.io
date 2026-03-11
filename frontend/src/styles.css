@@ -224,7 +224,7 @@ code,
 
 .tab-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.9rem;
   margin-top: 1.2rem;
 }
@@ -388,12 +388,20 @@ code,
   color: #d7e6df;
 }
 
+.status-pill.running {
+  background: rgba(63, 208, 201, 0.16);
+  color: #9ff7f1;
+}
+
 .folder-list {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .browser-list {
   margin-top: 0.85rem;
+  max-height: 30rem;
+  overflow: auto;
+  padding-right: 0.25rem;
 }
 
 .folder-chip {
@@ -622,6 +630,14 @@ code,
   white-space: pre-wrap;
 }
 
+.sync-status-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.sync-summary {
+  margin-top: 1rem;
+}
+
 @keyframes panel-rise {
   from {
     opacity: 0;
@@ -642,7 +658,8 @@ code,
   }
 
   .tab-strip,
-  .jobs-grid {
+  .jobs-grid,
+  .sync-status-grid {
     grid-template-columns: 1fr;
   }
 

@@ -7,12 +7,10 @@ import {
   JobDetail,
   PutioBrowser,
   RecurringSchedule,
-  SyncPreviewResponse,
   browsePutio,
   disconnectPutio,
   fetchDashboard,
   fetchJobs,
-  previewSync,
   runSchedule,
   runSync,
   saveSettings,
@@ -23,7 +21,7 @@ import {
 } from "./lib/api";
 
 type SyncMode = "all" | "folder";
-type AppTab = "putio" | "jellyfin" | "jobs";
+type AppTab = "putio" | "sync" | "jellyfin" | "jobs";
 type ScheduleDraft = Omit<RecurringSchedule, "id" | "next_run_at" | "last_run_at" | "last_job_id">;
 
 const defaultScheduleDraft: ScheduleDraft = {
@@ -89,9 +87,6 @@ export default function App() {
   const [mode, setMode] = useState<SyncMode>("folder");
   const [folderPath, setFolderPath] = useState("/Movies");
   const [destination, setDestination] = useState("/media/staging");
-  const [preview, setPreview] = useState<SyncPreviewResponse | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(fallbackDashboard.settings);
   const [settingsSaved, setSettingsSaved] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -178,25 +173,6 @@ export default function App() {
       window.clearInterval(timer);
     };
   }, []);
-
-  async function handlePreview(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setPreviewLoading(true);
-    setPreviewError(null);
-
-    try {
-      const result = await previewSync({
-        mode,
-        folder_path: mode === "folder" ? folderPath : undefined,
-        destination_path: destination,
-      });
-      setPreview(result);
-    } catch (issue) {
-      setPreviewError(issue instanceof Error ? issue.message : "Could not generate a sync preview.");
-    } finally {
-      setPreviewLoading(false);
-    }
-  }
 
   async function handleRunNow() {
     setRunError(null);
@@ -404,14 +380,31 @@ export default function App() {
   }
 
   const selectedJob = jobs[0];
+  const activeSyncJob = jobs.find((job) => job.status === "running" || job.status === "queued");
+  const latestFinishedJob = jobs.find((job) => job.status === "completed" || job.status === "failed");
+  const syncFocusJob = activeSyncJob ?? selectedJob;
   const selectedLibraryIds = new Set(settingsDraft.jellyfin.selected_library_ids);
   const selectedLibraries = dashboard.jellyfin_libraries.filter((library) =>
     selectedLibraryIds.has(library.id),
   );
   const nativeRedirectUri = "http://localhost:8000/api/auth/putio/callback";
   const containerRedirectUri = "http://localhost:8787/api/auth/putio/callback";
+  const formatTimestamp = (value?: string | null) => {
+    if (!value) {
+      return "Never";
+    }
+    return new Date(value).toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  };
   const tabs: Array<{ id: AppTab; label: string; note: string }> = [
     { id: "putio", label: "Put.io", note: dashboard.putio_connected ? "Connected" : "Needs auth" },
+    {
+      id: "sync",
+      label: "Sync",
+      note: activeSyncJob ? "Running now" : latestFinishedJob ? "Recent activity" : "Ready",
+    },
     {
       id: "jellyfin",
       label: "Jellyfin",
@@ -476,7 +469,6 @@ export default function App() {
         </section>
 
         <section className="feedback-stack" aria-live="polite">
-          {previewError && <p className="error-banner">{previewError}</p>}
           {error && <p className="error-banner">{error}</p>}
           {runError && <p className="error-banner">{runError}</p>}
           {settingsError && <p className="error-banner">{settingsError}</p>}
@@ -487,331 +479,364 @@ export default function App() {
         </section>
 
         {activeTab === "putio" && (
-          <>
-            <section className="status-grid single-panel tab-panel">
-              <article className="panel settings-panel">
-                <div className="section-heading">
-                  <h2>Put.io link</h2>
-                  <span className="small-note">
-                    {dashboard.putio_connected ? "Connected" : "OAuth required"}
-                  </span>
-                </div>
-                <form className="settings-form" onSubmit={handleSaveSettings}>
-                  <label>
-                    <span>Put.io client ID</span>
-                    <input
-                      onChange={(event) =>
-                        setSettingsDraft((current) => ({
-                          ...current,
-                          putio: { ...current.putio, app_id: event.target.value },
-                        }))
-                      }
-                      value={settingsDraft.putio.app_id}
-                    />
-                  </label>
-                  <label>
-                    <span>Put.io client secret</span>
-                    <input
-                      onChange={(event) =>
-                        setSettingsDraft((current) => ({
-                          ...current,
-                          putio: { ...current.putio, client_secret: event.target.value },
-                        }))
-                      }
-                      type="password"
-                      value={settingsDraft.putio.client_secret}
-                    />
-                  </label>
-                  <label>
-                    <span>OAuth redirect URI</span>
-                    <input
-                      onChange={(event) =>
-                        setSettingsDraft((current) => ({
-                          ...current,
-                          putio: { ...current.putio, redirect_uri: event.target.value },
-                        }))
-                      }
-                      value={settingsDraft.putio.redirect_uri}
-                    />
-                  </label>
-                  <div className="browser-panel">
-                    <div className="section-heading compact-heading">
-                      <h3>Put.io setup</h3>
-                      <span className="small-note">Helper values</span>
-                    </div>
-                    <div className="location-list">
-                      <a
-                        className="path-chip path-link"
-                        href="https://app.put.io/oauth/new"
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        Create new app on Put.io
-                      </a>
-                      <button
-                        className="path-chip"
-                        onClick={() =>
-                          setSettingsDraft((current) => ({
-                            ...current,
-                            putio: { ...current.putio, redirect_uri: nativeRedirectUri },
-                          }))
-                        }
-                        type="button"
-                      >
-                        Use native callback
-                      </button>
-                      <button
-                        className="path-chip"
-                        onClick={() =>
-                          setSettingsDraft((current) => ({
-                            ...current,
-                            putio: { ...current.putio, redirect_uri: containerRedirectUri },
-                          }))
-                        }
-                        type="button"
-                      >
-                        Use container callback
-                      </button>
-                    </div>
-                    <div className="preview-block">
-                      <h3>Suggested Put.io app values</h3>
-                      <ul>
-                        <li>Name: `get-put.io`</li>
-                        <li>Description: `Self-hosted Put.io sync portal for Jellyfin libraries.`</li>
-                        <li>Website for native mode: `http://localhost:5173`</li>
-                        <li>Callback for native mode: `http://localhost:8000/api/auth/putio/callback`</li>
-                        <li>Callback for Docker/container mode: `http://localhost:8787/api/auth/putio/callback`</li>
-                      </ul>
-                    </div>
+          <section className="status-grid single-panel tab-panel">
+            <article className="panel settings-panel">
+              <div className="section-heading">
+                <h2>Put.io link</h2>
+                <span className="small-note">
+                  {dashboard.putio_connected ? "Connected" : "OAuth required"}
+                </span>
+              </div>
+              <form className="settings-form" onSubmit={handleSaveSettings}>
+                <label>
+                  <span>Put.io client ID</span>
+                  <input
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        putio: { ...current.putio, app_id: event.target.value },
+                      }))
+                    }
+                    value={settingsDraft.putio.app_id}
+                  />
+                </label>
+                <label>
+                  <span>Put.io client secret</span>
+                  <input
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        putio: { ...current.putio, client_secret: event.target.value },
+                      }))
+                    }
+                    type="password"
+                    value={settingsDraft.putio.client_secret}
+                  />
+                </label>
+                <label>
+                  <span>OAuth redirect URI</span>
+                  <input
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        putio: { ...current.putio, redirect_uri: event.target.value },
+                      }))
+                    }
+                    value={settingsDraft.putio.redirect_uri}
+                  />
+                </label>
+                <div className="browser-panel">
+                  <div className="section-heading compact-heading">
+                    <h3>Put.io setup</h3>
+                    <span className="small-note">Helper values</span>
                   </div>
-                  <div className="inline-actions">
-                    <button className="primary-button" disabled={settingsSaving} type="submit">
-                      {settingsSaving ? "Saving..." : "Save integration settings"}
-                    </button>
+                  <div className="location-list">
+                    <a
+                      className="path-chip path-link"
+                      href="https://app.put.io/oauth/new"
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      Create new app on Put.io
+                    </a>
                     <button
-                      className="ghost-button"
-                      disabled={authBusy}
-                      onClick={
-                        dashboard.putio_connected ? handleDisconnectPutio : handleStartPutioAuth
+                      className="path-chip"
+                      onClick={() =>
+                        setSettingsDraft((current) => ({
+                          ...current,
+                          putio: { ...current.putio, redirect_uri: nativeRedirectUri },
+                        }))
                       }
                       type="button"
                     >
-                      {dashboard.putio_connected ? "Disconnect Put.io" : "Start Put.io login"}
+                      Use native callback
                     </button>
-                  </div>
-                  <p className="muted-copy">
-                    {dashboard.putio_connected
-                      ? `Connected as ${dashboard.settings.putio.account_username ?? "Put.io user"}.`
-                      : "Create a Put.io app, save the client ID and secret here, then start the browser login."}
-                  </p>
-                  <div className="preview-block">
-                    <h3>Manual token fallback</h3>
-                    <p>
-                      If you prefer, you can paste the OAuth token from Put.io's Secrets page instead of
-                      doing the browser login flow.
-                    </p>
-                    <div className="manual-token-row">
-                      <input
-                        onChange={(event) => setManualToken(event.target.value)}
-                        placeholder="Paste Put.io OAuth token"
-                        type="password"
-                        value={manualToken}
-                      />
-                      <button
-                        className="ghost-button small-button"
-                        disabled={manualTokenSaving || !manualToken.trim()}
-                        onClick={() => void handleSaveManualToken()}
-                        type="button"
-                      >
-                        {manualTokenSaving ? "Saving..." : "Use token"}
-                      </button>
-                    </div>
-                  </div>
-                </form>
-              </article>
-            </section>
-
-            <section className="workspace-grid tab-panel">
-              <article className="panel composer-panel">
-                <div className="section-heading">
-                  <h2>Compose a sync</h2>
-                  <span className="small-note">Preview first</span>
-                </div>
-
-                <form className="sync-form" onSubmit={handlePreview}>
-                  <label>
-                    <span>Default destination path</span>
-                    <input
-                      onChange={(event) =>
+                    <button
+                      className="path-chip"
+                      onClick={() =>
                         setSettingsDraft((current) => ({
                           ...current,
-                          sync_defaults: { destination_path: event.target.value },
+                          putio: { ...current.putio, redirect_uri: containerRedirectUri },
                         }))
                       }
-                      value={settingsDraft.sync_defaults.destination_path}
-                    />
-                  </label>
-
-                  <label>
-                    <span>Transfer mode</span>
-                    <div className="mode-toggle">
-                      <button
-                        className={mode === "folder" ? "mode-option active" : "mode-option"}
-                        onClick={() => setMode("folder")}
-                        type="button"
-                      >
-                        Specific folder
-                      </button>
-                      <button
-                        className={mode === "all" ? "mode-option active" : "mode-option"}
-                        onClick={() => setMode("all")}
-                        type="button"
-                      >
-                        Everything
-                      </button>
-                    </div>
-                  </label>
-
-                  <label>
-                    <span>Put.io path</span>
-                    <input
-                      disabled={mode === "all"}
-                      onChange={(event) => setFolderPath(event.target.value)}
-                      placeholder="/Movies"
-                      value={folderPath}
-                    />
-                  </label>
-
-                  <div className="browser-panel">
-                    <div className="section-heading compact-heading">
-                      <h3>Put.io browser</h3>
-                      <span className="small-note">
-                        {browserLoading ? "Loading" : putioBrowser.current_path}
-                      </span>
-                    </div>
-                    <div className="breadcrumb-row">
-                      {putioBrowser.breadcrumbs.map((crumb) => (
-                        <button
-                          className="breadcrumb-chip"
-                          key={crumb.path}
-                          onClick={() => handleBrowse(crumb.path)}
-                          type="button"
-                        >
-                          {crumb.name}
-                        </button>
-                      ))}
-                      {putioBrowser.parent_path && (
-                        <button
-                          className="breadcrumb-chip"
-                          onClick={() => handleBrowse(putioBrowser.parent_path ?? "/")}
-                          type="button"
-                        >
-                          Up
-                        </button>
-                      )}
-                    </div>
-                    <div className="folder-list browser-list">
-                      {putioBrowser.entries.map((entry) => (
-                        <button
-                          className={`folder-chip ${entry.path === folderPath ? "selected" : ""}`}
-                          key={entry.id}
-                          onClick={() => {
-                            setMode("folder");
-                            setFolderPath(entry.path);
-                          }}
-                          onDoubleClick={() => void handleBrowse(entry.path)}
-                          type="button"
-                        >
-                          <span>{entry.name}</span>
-                          <small>{entry.path}</small>
-                        </button>
-                      ))}
-                      {!putioBrowser.entries.length && (
-                        <p className="empty-state">
-                          {dashboard.putio_connected
-                            ? "No folders found at this level."
-                            : "Connect Put.io to browse folders."}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <label>
-                    <span>Destination path</span>
-                    <input
-                      list="destinations"
-                      onChange={(event) => setDestination(event.target.value)}
-                      placeholder="/media/staging"
-                      value={destination}
-                    />
-                    <datalist id="destinations">
-                      {dashboard.destinations.map((item) => (
-                        <option key={item} value={item} />
-                      ))}
-                    </datalist>
-                  </label>
-
-                  <div className="inline-actions">
-                    <button className="primary-button" disabled={previewLoading} type="submit">
-                      {previewLoading ? "Building preview..." : "Preview rclone plan"}
-                    </button>
-                    <button className="ghost-button" onClick={handleRunNow} type="button">
-                      Run sync now
+                      type="button"
+                    >
+                      Use container callback
                     </button>
                   </div>
-                </form>
-              </article>
+                  <div className="preview-block">
+                    <h3>Suggested Put.io app values</h3>
+                    <ul>
+                      <li>Name: `get-put.io`</li>
+                      <li>Description: `Self-hosted Put.io sync portal for Jellyfin libraries.`</li>
+                      <li>Website for native mode: `http://localhost:5173`</li>
+                      <li>Callback for native mode: `http://localhost:8000/api/auth/putio/callback`</li>
+                      <li>Callback for Docker/container mode: `http://localhost:8787/api/auth/putio/callback`</li>
+                    </ul>
+                  </div>
+                </div>
+                <div className="inline-actions">
+                  <button className="primary-button" disabled={settingsSaving} type="submit">
+                    {settingsSaving ? "Saving..." : "Save integration settings"}
+                  </button>
+                  <button
+                    className="ghost-button"
+                    disabled={authBusy}
+                    onClick={dashboard.putio_connected ? handleDisconnectPutio : handleStartPutioAuth}
+                    type="button"
+                  >
+                    {dashboard.putio_connected ? "Disconnect Put.io" : "Start Put.io login"}
+                  </button>
+                </div>
+                <p className="muted-copy">
+                  {dashboard.putio_connected
+                    ? `Connected as ${dashboard.settings.putio.account_username ?? "Put.io user"}.`
+                    : "Create a Put.io app, save the client ID and secret here, then start the browser login."}
+                </p>
+                <div className="preview-block">
+                  <h3>Manual token fallback</h3>
+                  <p>
+                    If you prefer, you can paste the OAuth token from Put.io's Secrets page instead of
+                    doing the browser login flow.
+                  </p>
+                  <div className="manual-token-row">
+                    <input
+                      onChange={(event) => setManualToken(event.target.value)}
+                      placeholder="Paste Put.io OAuth token"
+                      type="password"
+                      value={manualToken}
+                    />
+                    <button
+                      className="ghost-button small-button"
+                      disabled={manualTokenSaving || !manualToken.trim()}
+                      onClick={() => void handleSaveManualToken()}
+                      type="button"
+                    >
+                      {manualTokenSaving ? "Saving..." : "Use token"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </article>
+          </section>
+        )}
 
-              <article className="panel preview-panel">
-                <div className="section-heading">
-                  <h2>Command preview</h2>
-                  <span className="small-note">What will actually run</span>
+        {activeTab === "sync" && (
+          <section className="workspace-grid tab-panel">
+            <article className="panel composer-panel">
+              <div className="section-heading">
+                <h2>Compose a sync</h2>
+                <span className="small-note">Run directly</span>
+              </div>
+
+              <form className="sync-form">
+                <label>
+                  <span>Default destination path</span>
+                  <input
+                    onChange={(event) =>
+                      setSettingsDraft((current) => ({
+                        ...current,
+                        sync_defaults: { destination_path: event.target.value },
+                      }))
+                    }
+                    value={settingsDraft.sync_defaults.destination_path}
+                  />
+                </label>
+
+                <label>
+                  <span>Transfer mode</span>
+                  <div className="mode-toggle">
+                    <button
+                      className={mode === "folder" ? "mode-option active" : "mode-option"}
+                      onClick={() => setMode("folder")}
+                      type="button"
+                    >
+                      Specific folder
+                    </button>
+                    <button
+                      className={mode === "all" ? "mode-option active" : "mode-option"}
+                      onClick={() => setMode("all")}
+                      type="button"
+                    >
+                      Everything
+                    </button>
+                  </div>
+                </label>
+
+                <label>
+                  <span>Put.io path</span>
+                  <input
+                    disabled={mode === "all"}
+                    onChange={(event) => setFolderPath(event.target.value)}
+                    placeholder="/Movies"
+                    value={folderPath}
+                  />
+                </label>
+
+                <div className="browser-panel">
+                  <div className="section-heading compact-heading">
+                    <h3>Put.io browser</h3>
+                    <span className="small-note">
+                      {browserLoading ? "Loading" : putioBrowser.current_path}
+                    </span>
+                  </div>
+                  <p className="muted-copy">
+                    The browser shows folders for the current Put.io level only. Double-click a folder to go
+                    deeper, or use the breadcrumb trail to move back up.
+                  </p>
+                  <div className="breadcrumb-row">
+                    {putioBrowser.breadcrumbs.map((crumb) => (
+                      <button
+                        className="breadcrumb-chip"
+                        key={crumb.path}
+                        onClick={() => handleBrowse(crumb.path)}
+                        type="button"
+                      >
+                        {crumb.name}
+                      </button>
+                    ))}
+                    {putioBrowser.parent_path && (
+                      <button
+                        className="breadcrumb-chip"
+                        onClick={() => handleBrowse(putioBrowser.parent_path ?? "/")}
+                        type="button"
+                      >
+                        Up
+                      </button>
+                    )}
+                  </div>
+                  <div className="folder-list browser-list">
+                    {putioBrowser.entries.map((entry) => (
+                      <button
+                        className={`folder-chip ${entry.path === folderPath ? "selected" : ""}`}
+                        key={entry.id}
+                        onClick={() => {
+                          setMode("folder");
+                          setFolderPath(entry.path);
+                        }}
+                        onDoubleClick={() => void handleBrowse(entry.path)}
+                        type="button"
+                      >
+                        <span>{entry.name}</span>
+                        <small>{entry.path}</small>
+                      </button>
+                    ))}
+                    {!putioBrowser.entries.length && (
+                      <p className="empty-state">
+                        {dashboard.putio_connected
+                          ? "No folders found at this level."
+                          : "Connect Put.io to browse folders."}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
-                {preview ? (
-                  <div className="preview-content">
-                    <code>{preview.command_preview}</code>
-                    <div className="preview-block">
-                      <h3>Steps</h3>
+                <label>
+                  <span>Destination path</span>
+                  <input
+                    list="destinations"
+                    onChange={(event) => setDestination(event.target.value)}
+                    placeholder="/media/staging"
+                    value={destination}
+                  />
+                  <datalist id="destinations">
+                    {dashboard.destinations.map((item) => (
+                      <option key={item} value={item} />
+                    ))}
+                  </datalist>
+                </label>
+
+                <div className="inline-actions">
+                  <button
+                    className="primary-button"
+                    disabled={!dashboard.putio_connected}
+                    onClick={handleRunNow}
+                    type="button"
+                  >
+                    Run sync now
+                  </button>
+                </div>
+              </form>
+            </article>
+
+            <article className="panel preview-panel">
+              <div className="section-heading">
+                <h2>Sync activity</h2>
+                <span className="small-note">{activeSyncJob ? "Live" : "Latest run"}</span>
+              </div>
+
+              <div className="status-grid sync-status-grid">
+                <div className="signal-card">
+                  <span className="signal-label">Status</span>
+                  <strong>{syncFocusJob ? syncFocusJob.status : "Idle"}</strong>
+                </div>
+                <div className="signal-card">
+                  <span className="signal-label">Last run</span>
+                  <strong>{formatTimestamp(latestFinishedJob?.finished_at ?? latestFinishedJob?.started_at)}</strong>
+                </div>
+                <div className="signal-card">
+                  <span className="signal-label">Current target</span>
+                  <strong>{syncFocusJob ? (syncFocusJob.mode === "all" ? "/" : syncFocusJob.folder_path ?? "/") : (mode === "all" ? "/" : folderPath)}</strong>
+                </div>
+              </div>
+
+              {syncFocusJob ? (
+                <div className="preview-content">
+                  <div className="job-row sync-summary">
+                    <div>
+                      <strong>{syncFocusJob.label}</strong>
+                      <p>
+                        Destination: {syncFocusJob.destination_path}
+                      </p>
+                      <p>
+                        Started: {formatTimestamp(syncFocusJob.started_at ?? syncFocusJob.created_at)} · Finished:{" "}
+                        {formatTimestamp(syncFocusJob.finished_at)}
+                      </p>
+                    </div>
+                    <span
+                      className={
+                        syncFocusJob.status === "completed"
+                          ? "status-pill online"
+                          : syncFocusJob.status === "running"
+                            ? "status-pill running"
+                            : "status-pill muted"
+                      }
+                    >
+                      {syncFocusJob.status}
+                    </span>
+                  </div>
+
+                  <div className="preview-block">
+                    <h3>Warnings</h3>
+                    {syncFocusJob.warnings.length ? (
                       <ul>
-                        {preview.steps.map((step) => (
-                          <li key={step}>{step}</li>
+                        {syncFocusJob.warnings.map((warning) => (
+                          <li key={warning}>{warning}</li>
                         ))}
                       </ul>
-                    </div>
-                    <div className="preview-block">
-                      <h3>Warnings</h3>
-                      {preview.warnings.length ? (
-                        <ul>
-                          {preview.warnings.map((warning) => (
-                            <li key={warning}>{warning}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p>No immediate warnings.</p>
-                      )}
-                    </div>
-                    <div className="preview-block">
-                      <h3>Selected Jellyfin libraries</h3>
-                      {selectedLibraries.length ? (
-                        <ul>
-                          {selectedLibraries.map((library) => (
-                            <li key={library.id}>{library.name}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p>No specific libraries selected. Refresh remains global.</p>
-                      )}
-                    </div>
+                    ) : (
+                      <p>No current warnings.</p>
+                    )}
                   </div>
-                ) : (
-                  <div className="empty-preview">
-                    <p>Choose a scope and destination, then preview the generated `rclone` plan.</p>
+
+                  <div className="preview-block">
+                    <h3>Run log</h3>
+                    <code className="log-block">
+                      {syncFocusJob.log_lines.length
+                        ? syncFocusJob.log_lines.join("\n")
+                        : syncFocusJob.status === "queued"
+                          ? "Job queued. Waiting for runner output."
+                          : "No log lines yet."}
+                    </code>
                   </div>
-                )}
-              </article>
-            </section>
-          </>
+                </div>
+              ) : (
+                <div className="empty-preview">
+                  <p>Choose a scope and destination, then run a sync to see its status and logs here.</p>
+                </div>
+              )}
+            </article>
+          </section>
         )}
 
         {activeTab === "jellyfin" && (
