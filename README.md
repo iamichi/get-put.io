@@ -147,13 +147,64 @@ The Proxmox bootstrap flow is split into two concerns:
 - create a Debian 12 LXC with the right nesting and mount options
 - install Docker and launch `get-put.io` inside that container
 
-Start with:
+You can run it directly on a Proxmox host without cloning this repo first.
+
+DHCP example:
+
+```bash
+ROOT_PASSWORD='change-me' \
+CTID=1870 \
+HOSTNAME=get-putio \
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/iamichi/get-put.io/main/scripts/proxmox/create-lxc.sh)"
+```
+
+Static IP example:
+
+```bash
+ROOT_PASSWORD='change-me' \
+CTID=1870 \
+HOSTNAME=get-putio \
+IP_CONFIG='192.168.1.50/24' \
+GATEWAY='192.168.1.1' \
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/iamichi/get-put.io/main/scripts/proxmox/create-lxc.sh)"
+```
+
+SSH key example instead of a root password:
+
+```bash
+SSH_PUBLIC_KEY_FILE=/root/.ssh/authorized_keys \
+CTID=1870 \
+HOSTNAME=get-putio \
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/iamichi/get-put.io/main/scripts/proxmox/create-lxc.sh)"
+```
+
+The script is env-driven, not interactive:
+- it does not prompt for an IP address
+- if you leave `IP_CONFIG=dhcp`, it requests DHCP and then tries to detect the assigned container IP automatically
+- if you set `IP_CONFIG` and `GATEWAY`, it uses that static address and derives the app URL from it
+- it now defaults `APP_REPO_URL` to `https://github.com/iamichi/get-put.io.git` and deploys `main` automatically
+
+Optional useful variables:
+- `PUBLIC_URL=http://192.168.1.50:8787`
+- `MEDIA_SOURCE=/mnt/pve/media`
+- `MEDIA_TARGET=/srv/media`
+- `APP_BRANCH=main`
+- `APP_PORT=8787`
+
+If you prefer to inspect the script first, use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iamichi/get-put.io/main/scripts/proxmox/create-lxc.sh -o /root/create-get-putio-lxc.sh
+bash /root/create-get-putio-lxc.sh
+```
+
+If you already cloned the repo locally on the Proxmox host, you can still use:
 
 ```bash
 ./scripts/proxmox/create-lxc.sh
 ```
 
-The script is environment-driven. Read the header comments before running it on a Proxmox host.
+On success, the script prints the app URL and the Put.io redirect URI you should register for OAuth.
 
 ## Environment variables
 
