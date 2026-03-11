@@ -1,6 +1,7 @@
 import { FormEvent, startTransition, useEffect, useRef, useState } from "react";
 import {
   AppSettings,
+  cancelJob,
   createSchedule,
   DashboardResponse,
   deleteSchedule,
@@ -94,6 +95,7 @@ export default function App() {
   const [jellyfinMessage, setJellyfinMessage] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [jobMessage, setJobMessage] = useState<string | null>(null);
   const [browserLoading, setBrowserLoading] = useState(false);
   const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(defaultScheduleDraft);
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
@@ -176,6 +178,7 @@ export default function App() {
 
   async function handleRunNow() {
     setRunError(null);
+    setJobMessage(null);
     try {
       const job = await runSync({
         mode,
@@ -185,6 +188,18 @@ export default function App() {
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
     } catch (issue) {
       setRunError(issue instanceof Error ? issue.message : "Unable to run job.");
+    }
+  }
+
+  async function handleCancelJob(jobId: string) {
+    setRunError(null);
+    setJobMessage(null);
+    try {
+      const job = await cancelJob(jobId);
+      setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
+      setJobMessage("Sync cancelled.");
+    } catch (issue) {
+      setRunError(issue instanceof Error ? issue.message : "Unable to cancel job.");
     }
   }
 
@@ -475,6 +490,7 @@ export default function App() {
           {scheduleError && <p className="error-banner">{scheduleError}</p>}
           {settingsSaved && <p className="success-banner">{settingsSaved}</p>}
           {jellyfinMessage && <p className="success-banner">{jellyfinMessage}</p>}
+          {jobMessage && <p className="success-banner">{jobMessage}</p>}
           {scheduleMessage && <p className="success-banner">{scheduleMessage}</p>}
         </section>
 
@@ -799,12 +815,26 @@ export default function App() {
                           ? "status-pill online"
                           : syncFocusJob.status === "running"
                             ? "status-pill running"
+                            : syncFocusJob.status === "cancelled"
+                              ? "status-pill cancelled"
                             : "status-pill muted"
                       }
                     >
                       {syncFocusJob.status}
                     </span>
                   </div>
+
+                  {(syncFocusJob.status === "queued" || syncFocusJob.status === "running") && (
+                    <div className="inline-actions">
+                      <button
+                        className="ghost-button"
+                        onClick={() => void handleCancelJob(syncFocusJob.id)}
+                        type="button"
+                      >
+                        Cancel sync
+                      </button>
+                    </div>
+                  )}
 
                   <div className="preview-block">
                     <h3>Warnings</h3>

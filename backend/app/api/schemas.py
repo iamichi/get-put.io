@@ -53,7 +53,7 @@ class JobSummary(BaseModel):
     label: str
     mode: Literal["all", "folder"]
     target_path: str
-    status: Literal["queued", "running", "completed", "failed"]
+    status: Literal["queued", "running", "completed", "failed", "cancelled"]
     last_run: str
     refresh_triggered: bool = False
 
@@ -133,7 +133,7 @@ class JobDetailResponse(BaseModel):
     mode: Literal["all", "folder"]
     folder_path: str | None = None
     destination_path: str
-    status: Literal["queued", "running", "completed", "failed"]
+    status: Literal["queued", "running", "completed", "failed", "cancelled"]
     created_at: str
     started_at: str | None = None
     finished_at: str | None = None

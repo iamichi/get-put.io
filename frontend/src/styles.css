@@ -393,6 +393,11 @@ code,
   color: #9ff7f1;
 }
 
+.status-pill.cancelled {
+  background: rgba(255, 159, 110, 0.16);
+  color: #ffd2b3;
+}
+
 .folder-list {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }

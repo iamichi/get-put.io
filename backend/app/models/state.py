@@ -56,7 +56,7 @@ class SyncJobRecord(BaseModel):
     folder_path: str | None = None
     destination_path: str
     command_preview: str
-    status: Literal["queued", "running", "completed", "failed"]
+    status: Literal["queued", "running", "completed", "failed", "cancelled"]
     created_at: str = Field(default_factory=utc_now)
     started_at: str | None = None
     finished_at: str | None = None

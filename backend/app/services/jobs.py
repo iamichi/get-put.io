@@ -17,6 +17,9 @@ from app.services.state import StateStore
 
 
 class JobService:
+    _lock = threading.RLock()
+    _processes: dict[str, subprocess.Popen[str]] = {}
+
     def __init__(self, settings: Settings, state_store: StateStore) -> None:
         self.settings = settings
         self.state_store = state_store
@@ -26,6 +29,44 @@ class JobService:
 
     def get_job(self, job_id: str) -> SyncJobRecord | None:
         return self.state_store.snapshot().get_job(job_id)
+
+    def cancel_job(self, job_id: str) -> SyncJobRecord:
+        snapshot = self.state_store.snapshot()
+        job = snapshot.get_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        if job.status not in {"queued", "running"}:
+            raise ValueError("Only queued or running jobs can be cancelled.")
+
+        with self._lock:
+            process = self._processes.pop(job_id, None)
+
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+
+        def mutate(state: AppState) -> SyncJobRecord | None:
+            current = state.get_job(job_id)
+            if current is None:
+                return None
+            if current.status in {"completed", "failed", "cancelled"}:
+                return current
+            current.status = "cancelled"
+            current.finished_at = datetime.now(timezone.utc).isoformat()
+            current.error_message = "Cancelled by user."
+            current.log_lines.append("Job cancelled by user.")
+            current.log_lines = current.log_lines[-200:]
+            state.touch()
+            return current
+
+        cancelled = self.state_store.mutate(mutate)
+        if cancelled is None:
+            raise KeyError(job_id)
+        return cancelled
 
     def preview(self, payload: SyncPreviewRequest) -> SyncPreviewResponse:
         state = self.state_store.snapshot()
@@ -104,6 +145,9 @@ class JobService:
             self._finish_failed(job_id, str(exc))
             return
 
+        with self._lock:
+            self._processes[job_id] = process
+
         files_changed = False
         assert process.stdout is not None
         for line in process.stdout:
@@ -115,6 +159,14 @@ class JobService:
             self._append_log(job_id, cleaned)
 
         return_code = process.wait()
+        with self._lock:
+            self._processes.pop(job_id, None)
+
+        current = self.state_store.snapshot().get_job(job_id)
+        if current is None:
+            return
+        if current.status == "cancelled":
+            return
         if return_code != 0:
             self._finish_failed(job_id, f"rclone exited with status {return_code}.")
             return
@@ -156,6 +208,8 @@ class JobService:
         def mutate(state: AppState) -> None:
             job = state.get_job(job_id)
             if job is None:
+                return
+            if job.status == "cancelled":
                 return
             job.status = "failed"
             job.finished_at = datetime.now(timezone.utc).isoformat()

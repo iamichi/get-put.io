@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.config import get_settings
 from app.main import app
-from app.models.state import PutioToken
+from app.models.state import PutioToken, SyncJobRecord
 from app.services.putio import PutioService
 from app.services.scheduler import get_scheduler_service
 from app.services.state import get_state_store
@@ -127,3 +127,35 @@ def test_putio_callback_returns_to_frontend_url(monkeypatch, tmp_path: Path) -> 
 
     assert response.status_code == 200
     assert 'href="http://localhost:5173"' in response.text
+
+
+def test_cancel_running_job(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GET_PUTIO_STATE_PATH", str(tmp_path / "state.json"))
+    get_settings.cache_clear()
+    get_state_store.cache_clear()
+    get_scheduler_service.cache_clear()
+
+    store = get_state_store()
+
+    def seed_job(state) -> None:
+        state.append_job(
+            SyncJobRecord(
+                id="job-test-cancel",
+                label="Sync /Movies",
+                mode="folder",
+                folder_path="/Movies",
+                destination_path="/media/staging",
+                command_preview="rclone copy putio:Movies /media/staging",
+                status="running",
+            )
+        )
+
+    store.mutate(seed_job)
+
+    client = TestClient(app)
+    response = client.post("/api/jobs/job-test-cancel/cancel")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "cancelled"
+    assert payload["error_message"] == "Cancelled by user."

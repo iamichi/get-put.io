@@ -388,3 +388,18 @@ def get_job(
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     return JobDetailResponse.model_validate(job.model_dump())
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=JobDetailResponse)
+def cancel_job(
+    job_id: str,
+    settings: Settings = Depends(settings_dependency),
+    store: StateStore = Depends(state_store_dependency),
+) -> JobDetailResponse:
+    try:
+        job = JobService(settings, store).cancel_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Job not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JobDetailResponse.model_validate(job.model_dump())

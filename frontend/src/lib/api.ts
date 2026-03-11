@@ -28,7 +28,7 @@ export type JobSummary = {
   label: string;
   mode: "all" | "folder";
   target_path: string;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
   last_run: string;
   refresh_triggered: boolean;
 };
@@ -116,7 +116,7 @@ export type JobDetail = {
   mode: "all" | "folder";
   folder_path?: string | null;
   destination_path: string;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
   created_at: string;
   started_at?: string | null;
   finished_at?: string | null;
@@ -204,6 +204,16 @@ export async function runSync(payload: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function cancelJob(jobId: string): Promise<JobDetail> {
+  const response = await fetch(`${API_BASE_URL}/api/jobs/${jobId}/cancel`, {
+    method: "POST",
   });
   if (!response.ok) {
     throw new Error(await readError(response));
