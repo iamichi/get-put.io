@@ -488,7 +488,7 @@ export default function App() {
 
         {activeTab === "putio" && (
           <>
-            <section className="status-grid tab-panel">
+            <section className="status-grid single-panel tab-panel">
               <article className="panel settings-panel">
                 <div className="section-heading">
                   <h2>Put.io link</h2>
@@ -573,10 +573,6 @@ export default function App() {
                         Use container callback
                       </button>
                     </div>
-                    <p className="muted-copy">
-                      Put.io does not document query-string prefills for the new app form, so this link can
-                      open the page but not reliably populate its fields for you.
-                    </p>
                     <div className="preview-block">
                       <h3>Suggested Put.io app values</h3>
                       <ul>
