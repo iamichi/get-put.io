@@ -28,6 +28,7 @@ app = FastAPI(title=settings.product_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        settings.frontend_url.rstrip("/"),
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:8787",

@@ -33,6 +33,10 @@ from app.models.state import utc_now
 router = APIRouter(prefix="/api")
 
 
+def dashboard_url(settings: Settings) -> str:
+    return settings.frontend_url.rstrip("/") or "/"
+
+
 def settings_dependency() -> Settings:
     return get_settings()
 
@@ -216,13 +220,14 @@ def putio_callback(
         state_model.settings.putio.oauth_state = None
 
     store.mutate(mutate)
+    return_url = dashboard_url(settings)
     return HTMLResponse(
-        """
+        f"""
         <html>
           <body style="font-family: sans-serif; background:#071018; color:#eef5ef; padding:2rem;">
             <h1>Put.io connected</h1>
             <p>You can close this tab and return to get-put.io.</p>
-            <p><a href="/" style="color:#a6f4c5;">Return to dashboard</a></p>
+            <p><a href="{return_url}" style="color:#a6f4c5;">Return to dashboard</a></p>
           </body>
         </html>
         """

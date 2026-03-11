@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 
 from app.config import get_settings
 from app.main import app
+from app.models.state import PutioToken
+from app.services.putio import PutioService
 from app.services.scheduler import get_scheduler_service
 from app.services.state import get_state_store
 
@@ -89,3 +91,39 @@ def test_settings_round_trip_and_preview(monkeypatch, tmp_path: Path) -> None:
     list_response = client.get("/api/schedules")
     assert list_response.status_code == 200
     assert len(list_response.json()["schedules"]) == 1
+
+
+def test_putio_callback_returns_to_frontend_url(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GET_PUTIO_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setenv("FRONTEND_URL", "http://localhost:5173")
+    get_settings.cache_clear()
+    get_state_store.cache_clear()
+    get_scheduler_service.cache_clear()
+
+    def fake_exchange_code(self: PutioService, code: str) -> PutioToken:
+        assert code == "oauth-code"
+        return PutioToken(
+            access_token="token",
+            token_type="Bearer",
+            expiry="0001-01-01T00:00:00Z",
+        )
+
+    def fake_fetch_account(self: PutioService, token: PutioToken) -> tuple[int | None, str | None]:
+        assert token.access_token == "token"
+        return 42, "ichi"
+
+    monkeypatch.setattr(PutioService, "exchange_code", fake_exchange_code)
+    monkeypatch.setattr(PutioService, "fetch_account", fake_fetch_account)
+
+    store = get_state_store()
+
+    def seed_oauth_state(state) -> None:
+        state.settings.putio.oauth_state = "oauth-state"
+
+    store.mutate(seed_oauth_state)
+
+    client = TestClient(app)
+    response = client.get("/api/auth/putio/callback?code=oauth-code&state=oauth-state")
+
+    assert response.status_code == 200
+    assert 'href="http://localhost:5173"' in response.text

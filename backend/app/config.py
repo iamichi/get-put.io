@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     product_name: str = "get-put.io"
     host: str = "0.0.0.0"
     port: int = 8000
+    frontend_url: str = Field(default="http://localhost:5173", alias="FRONTEND_URL")
     storage_path: Path = Path("/media")
     state_path: Path = ROOT_DIR / "data" / "app" / "state.json"
     rclone_binary: str = Field(default="rclone", alias="RCLONE_BINARY")

@@ -160,6 +160,7 @@ The script is environment-driven. Read the header comments before running it on 
 Important variables:
 - `GET_PUTIO_HOST`
 - `GET_PUTIO_PORT`
+- `FRONTEND_URL`
 - `GET_PUTIO_STORAGE_PATH`
 - `GET_PUTIO_STATE_PATH`
 - `GET_PUTIO_SCHEDULE_TIMEZONE`
@@ -171,6 +172,10 @@ Important variables:
 - `PUTIO_ACCESS_TOKEN`
 - `JELLYFIN_BASE_URL`
 - `JELLYFIN_API_KEY`
+
+`FRONTEND_URL` controls where the Put.io OAuth callback success page sends you after login.
+- Native dev should use `http://localhost:5173`
+- Docker, Apple containers, and single-port deployments should usually use `http://localhost:8787`
 
 ## Recommended v1 workflow
 
