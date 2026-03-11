@@ -1,9 +1,12 @@
-import { FormEvent, useEffect, useRef, useState, startTransition } from "react";
+import { FormEvent, startTransition, useEffect, useRef, useState } from "react";
 import {
   AppSettings,
   DashboardResponse,
+  JellyfinLibrary,
   JobDetail,
+  PutioBrowser,
   SyncPreviewResponse,
+  browsePutio,
   disconnectPutio,
   fetchDashboard,
   fetchJobs,
@@ -36,6 +39,7 @@ const fallbackDashboard: DashboardResponse = {
       api_key: "",
       refresh_after_sync: true,
       refresh_only_on_change: true,
+      selected_library_ids: [],
     },
     sync_defaults: {
       destination_path: "/media/staging",
@@ -43,6 +47,13 @@ const fallbackDashboard: DashboardResponse = {
   },
   connections: [],
   folders: [],
+  putio_browser: {
+    current_path: "/",
+    parent_path: null,
+    breadcrumbs: [],
+    entries: [],
+  },
+  jellyfin_libraries: [],
   destinations: [],
   jobs: [],
   putio_connected: false,
@@ -52,6 +63,7 @@ const fallbackDashboard: DashboardResponse = {
 export default function App() {
   const [dashboard, setDashboard] = useState<DashboardResponse>(fallbackDashboard);
   const [jobs, setJobs] = useState<JobDetail[]>([]);
+  const [putioBrowser, setPutioBrowser] = useState<PutioBrowser>(fallbackDashboard.putio_browser);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<SyncMode>("folder");
@@ -67,31 +79,46 @@ export default function App() {
   const [jellyfinMessage, setJellyfinMessage] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [browserLoading, setBrowserLoading] = useState(false);
   const seededRef = useRef(false);
+  const browserPathRef = useRef("/");
 
   useEffect(() => {
     let active = true;
 
     async function load() {
       try {
-        const [dashboardResult, jobsResult] = await Promise.all([
-          fetchDashboard(),
-          fetchJobs(),
-        ]);
+        const [dashboardResult, jobsResult] = await Promise.all([fetchDashboard(), fetchJobs()]);
         if (!active) {
           return;
         }
+
+        let browserResult = dashboardResult.putio_browser;
+        if (
+          dashboardResult.putio_connected &&
+          browserPathRef.current !== "/" &&
+          browserPathRef.current !== dashboardResult.putio_browser.current_path
+        ) {
+          try {
+            browserResult = await browsePutio(browserPathRef.current);
+          } catch {
+            browserResult = dashboardResult.putio_browser;
+            browserPathRef.current = "/";
+          }
+        }
+
         startTransition(() => {
           setDashboard(dashboardResult);
           setJobs(jobsResult);
+          setPutioBrowser(browserResult);
           if (!seededRef.current) {
             setSettingsDraft(dashboardResult.settings);
             setDestination(
               dashboardResult.settings.sync_defaults.destination_path ||
-                dashboardResult.destinations[1] ||
+                dashboardResult.destinations[0] ||
                 "/media/staging",
             );
-            setFolderPath(dashboardResult.folders[1]?.path ?? "/Movies");
+            setFolderPath(browserResult.entries[0]?.path ?? "/");
             seededRef.current = true;
           }
           setError(null);
@@ -100,11 +127,7 @@ export default function App() {
         if (!active) {
           return;
         }
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : "API unavailable. The shell is still usable while the backend comes online.",
-        );
+        setError(loadError instanceof Error ? loadError.message : "Unable to load the dashboard.");
       } finally {
         if (active) {
           setLoading(false);
@@ -112,7 +135,6 @@ export default function App() {
       }
     }
 
-    setLoading(true);
     void load();
     const timer = window.setInterval(() => {
       void load();
@@ -136,8 +158,8 @@ export default function App() {
         destination_path: destination,
       });
       setPreview(result);
-    } catch {
-      setPreviewError("Could not generate a sync preview.");
+    } catch (issue) {
+      setPreviewError(issue instanceof Error ? issue.message : "Could not generate a sync preview.");
     } finally {
       setPreviewLoading(false);
     }
@@ -152,8 +174,8 @@ export default function App() {
         destination_path: destination,
       });
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
-    } catch (runIssue) {
-      setRunError(runIssue instanceof Error ? runIssue.message : "Unable to run job.");
+    } catch (issue) {
+      setRunError(issue instanceof Error ? issue.message : "Unable to run job.");
     }
   }
 
@@ -166,8 +188,8 @@ export default function App() {
       const saved = await saveSettings(settingsDraft);
       setSettingsDraft(saved);
       setSettingsSaved("Settings saved.");
-    } catch (saveError) {
-      setSettingsError(saveError instanceof Error ? saveError.message : "Unable to save settings.");
+    } catch (issue) {
+      setSettingsError(issue instanceof Error ? issue.message : "Unable to save settings.");
     } finally {
       setSettingsSaving(false);
     }
@@ -179,8 +201,8 @@ export default function App() {
     try {
       const authUrl = await startPutioAuth();
       window.location.assign(authUrl);
-    } catch (authError) {
-      setSettingsError(authError instanceof Error ? authError.message : "Unable to start Put.io auth.");
+    } catch (issue) {
+      setSettingsError(issue instanceof Error ? issue.message : "Unable to start Put.io auth.");
       setAuthBusy(false);
     }
   }
@@ -189,11 +211,11 @@ export default function App() {
     setAuthBusy(true);
     try {
       await disconnectPutio();
+      browserPathRef.current = "/";
+      setPutioBrowser(fallbackDashboard.putio_browser);
       setSettingsSaved("Put.io disconnected.");
-    } catch (disconnectError) {
-      setSettingsError(
-        disconnectError instanceof Error ? disconnectError.message : "Unable to disconnect Put.io.",
-      );
+    } catch (issue) {
+      setSettingsError(issue instanceof Error ? issue.message : "Unable to disconnect Put.io.");
     } finally {
       setAuthBusy(false);
     }
@@ -205,14 +227,52 @@ export default function App() {
     try {
       const message = await testJellyfin();
       setJellyfinMessage(message);
-    } catch (testError) {
-      setSettingsError(
-        testError instanceof Error ? testError.message : "Unable to test Jellyfin connection.",
-      );
+    } catch (issue) {
+      setSettingsError(issue instanceof Error ? issue.message : "Unable to test Jellyfin.");
     }
   }
 
+  async function handleBrowse(path: string) {
+    setBrowserLoading(true);
+    try {
+      const browser = await browsePutio(path);
+      browserPathRef.current = browser.current_path;
+      setPutioBrowser(browser);
+      if (mode === "folder") {
+        setFolderPath(browser.current_path);
+      }
+    } catch (issue) {
+      setSettingsError(issue instanceof Error ? issue.message : "Unable to browse Put.io.");
+    } finally {
+      setBrowserLoading(false);
+    }
+  }
+
+  function handleLibraryToggle(libraryId: string, checked: boolean) {
+    setSettingsDraft((current) => ({
+      ...current,
+      jellyfin: {
+        ...current.jellyfin,
+        selected_library_ids: checked
+          ? [...current.jellyfin.selected_library_ids, libraryId]
+          : current.jellyfin.selected_library_ids.filter((id) => id !== libraryId),
+      },
+    }));
+  }
+
+  function handleUseLibraryLocation(location: string) {
+    setDestination(location);
+    setSettingsDraft((current) => ({
+      ...current,
+      sync_defaults: { destination_path: location },
+    }));
+  }
+
   const selectedJob = jobs[0];
+  const selectedLibraryIds = new Set(settingsDraft.jellyfin.selected_library_ids);
+  const selectedLibraries = dashboard.jellyfin_libraries.filter((library) =>
+    selectedLibraryIds.has(library.id),
+  );
 
   return (
     <div className="page-shell">
@@ -241,12 +301,12 @@ export default function App() {
               <strong>{mode === "all" ? "Library sweep" : "Folder lane"}</strong>
             </div>
             <div className="signal-card">
-              <span className="signal-label">Target</span>
-              <strong>{destination}</strong>
+              <span className="signal-label">Put.io path</span>
+              <strong>{mode === "all" ? "/" : folderPath}</strong>
             </div>
             <div className="signal-card">
-              <span className="signal-label">Runtime</span>
-              <strong>LXC / macOS</strong>
+              <span className="signal-label">Jellyfin intent</span>
+              <strong>{selectedLibraries.length ? `${selectedLibraries.length} libraries` : "Global hook"}</strong>
             </div>
           </div>
         </section>
@@ -322,7 +382,7 @@ export default function App() {
             <div className="section-heading">
               <h2>Jellyfin hook</h2>
               <span className="small-note">
-                {settingsDraft.jellyfin.enabled ? "Optional post-sync action" : "Disabled"}
+                {settingsDraft.jellyfin.enabled ? "Library-aware" : "Disabled"}
               </span>
             </div>
             <form className="settings-form" onSubmit={handleSaveSettings}>
@@ -397,6 +457,43 @@ export default function App() {
                 />
                 <span>Only refresh when files changed</span>
               </label>
+
+              <div className="library-picker">
+                <div className="section-heading compact-heading">
+                  <h3>Jellyfin libraries</h3>
+                  <span className="small-note">
+                    {dashboard.jellyfin_libraries.length ? "Selectable" : "Connect to load"}
+                  </span>
+                </div>
+                {dashboard.jellyfin_libraries.map((library) => (
+                  <div className="library-card" key={library.id}>
+                    <label className="toggle-row">
+                      <input
+                        checked={selectedLibraryIds.has(library.id)}
+                        onChange={(event) => handleLibraryToggle(library.id, event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>
+                        {library.name}
+                        {library.collection_type ? ` · ${library.collection_type}` : ""}
+                      </span>
+                    </label>
+                    <div className="location-list">
+                      {library.locations.map((location) => (
+                        <button
+                          className="path-chip"
+                          key={location}
+                          onClick={() => handleUseLibraryLocation(location)}
+                          type="button"
+                        >
+                          {location}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               <div className="inline-actions">
                 <button className="primary-button" disabled={settingsSaving} type="submit">
                   Save hook settings
@@ -406,7 +503,8 @@ export default function App() {
                 </button>
               </div>
               <p className="muted-copy">
-                Use a full base URL and an admin API key. Username and password are not required.
+                Use a full base URL and an admin API key. Library selection scopes your intent and path
+                choices, but Jellyfin still exposes only a global refresh endpoint.
               </p>
             </form>
           </article>
@@ -462,6 +560,58 @@ export default function App() {
                   value={folderPath}
                 />
               </label>
+
+              <div className="browser-panel">
+                <div className="section-heading compact-heading">
+                  <h3>Put.io browser</h3>
+                  <span className="small-note">{browserLoading ? "Loading" : putioBrowser.current_path}</span>
+                </div>
+                <div className="breadcrumb-row">
+                  {putioBrowser.breadcrumbs.map((crumb) => (
+                    <button
+                      className="breadcrumb-chip"
+                      key={crumb.path}
+                      onClick={() => handleBrowse(crumb.path)}
+                      type="button"
+                    >
+                      {crumb.name}
+                    </button>
+                  ))}
+                  {putioBrowser.parent_path && (
+                    <button
+                      className="breadcrumb-chip"
+                      onClick={() => handleBrowse(putioBrowser.parent_path ?? "/")}
+                      type="button"
+                    >
+                      Up
+                    </button>
+                  )}
+                </div>
+                <div className="folder-list browser-list">
+                  {putioBrowser.entries.map((entry) => (
+                    <button
+                      className={`folder-chip ${entry.path === folderPath ? "selected" : ""}`}
+                      key={entry.id}
+                      onClick={() => {
+                        setMode("folder");
+                        setFolderPath(entry.path);
+                      }}
+                      onDoubleClick={() => void handleBrowse(entry.path)}
+                      type="button"
+                    >
+                      <span>{entry.name}</span>
+                      <small>{entry.path}</small>
+                    </button>
+                  ))}
+                  {!putioBrowser.entries.length && (
+                    <p className="empty-state">
+                      {dashboard.putio_connected
+                        ? "No folders found at this level."
+                        : "Connect Put.io to browse folders."}
+                    </p>
+                  )}
+                </div>
+              </div>
 
               <label>
                 <span>Destination path</span>
@@ -525,6 +675,18 @@ export default function App() {
                     <p>No immediate warnings.</p>
                   )}
                 </div>
+                <div className="preview-block">
+                  <h3>Selected Jellyfin libraries</h3>
+                  {selectedLibraries.length ? (
+                    <ul>
+                      {selectedLibraries.map((library) => (
+                        <li key={library.id}>{library.name}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No specific libraries selected. Refresh remains global.</p>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="empty-preview">
@@ -546,8 +708,7 @@ export default function App() {
                   <div>
                     <strong>{job.label}</strong>
                     <p>
-                      {job.mode === "all" ? "Full library" : job.folder_path} to{" "}
-                      {job.destination_path}
+                      {job.mode === "all" ? "Full library" : job.folder_path} to {job.destination_path}
                     </p>
                   </div>
                   <span

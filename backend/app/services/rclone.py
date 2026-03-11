@@ -7,6 +7,7 @@ from pathlib import Path
 from app.api.schemas import SyncPreviewRequest, SyncPreviewResponse
 from app.config import Settings
 from app.models.state import AppState
+from app.services.jellyfin import JellyfinService
 
 
 class RcloneService:
@@ -31,6 +32,26 @@ class RcloneService:
             warnings.append("Put.io is not connected yet.")
         if self.state.settings.jellyfin.enabled and not self.state.settings.jellyfin.api_key:
             warnings.append("Jellyfin integration is enabled but the API key is empty.")
+        selected_library_ids = set(self.state.settings.jellyfin.selected_library_ids)
+        if selected_library_ids:
+            try:
+                libraries = {
+                    library.id: library
+                    for library in JellyfinService(self.settings, self.state).list_libraries()
+                }
+                selected_locations: list[str] = []
+                for library_id in selected_library_ids:
+                    library = libraries.get(library_id)
+                    if library is not None:
+                        selected_locations.extend(library.locations)
+                if selected_locations and not any(
+                    str(destination).startswith(location.rstrip("/")) for location in selected_locations
+                ):
+                    warnings.append(
+                        "Destination is outside the selected Jellyfin library locations."
+                    )
+            except Exception:
+                warnings.append("Could not validate the destination against Jellyfin libraries.")
 
         return SyncPreviewResponse(
             title="Sync preview",

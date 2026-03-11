@@ -40,6 +40,7 @@ def test_settings_round_trip_and_preview(monkeypatch, tmp_path: Path) -> None:
                     "api_key": "abc123",
                     "refresh_after_sync": True,
                     "refresh_only_on_change": True,
+                    "selected_library_ids": [],
                 },
                 "sync_defaults": {
                     "destination_path": "/media/staging",

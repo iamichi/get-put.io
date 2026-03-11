@@ -36,6 +36,7 @@ class JellyfinSettings(BaseModel):
     api_key: str = ""
     refresh_after_sync: bool = True
     refresh_only_on_change: bool = True
+    selected_library_ids: list[str] = Field(default_factory=list)
 
 
 class SyncDefaults(BaseModel):
@@ -102,4 +103,3 @@ class AppState(BaseModel):
             setattr(job, key, value)
         self.touch()
         return job
-

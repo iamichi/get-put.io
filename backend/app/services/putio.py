@@ -5,7 +5,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from app.api.schemas import ConnectionStatus, FolderNode
+from app.api.schemas import BreadcrumbNode, ConnectionStatus, FolderNode, PutioBrowserResponse
 from app.config import Settings
 from app.models.state import AppState, PutioToken
 
@@ -81,7 +81,7 @@ class PutioService:
         username = info.json().get("info", {}).get("username")
         return user_id, username
 
-    def list_folders(self, parent_id: int = 0) -> list[FolderNode]:
+    def list_folders(self, parent_id: int = 0, base_path: str = "/") -> list[FolderNode]:
         token = self.state.settings.putio.token
         if token is None:
             return []
@@ -112,16 +112,70 @@ class PutioService:
         except httpx.HTTPError:
             return []
 
-        folders: list[FolderNode] = [FolderNode(id="root", name="Everything", path="/", child_count=0)]
+        folders: list[FolderNode] = []
         for item in files:
             if item.get("content_type") != "application/x-directory":
                 continue
+            item_path = self._join_path(base_path, item["name"])
             folders.append(
                 FolderNode(
                     id=str(item["id"]),
                     name=item["name"],
-                    path=f"/{item['name']}",
+                    path=item_path,
                     child_count=0,
                 )
             )
         return folders
+
+    def browse_path(self, path: str = "/") -> PutioBrowserResponse:
+        normalized = self._normalize_path(path)
+        if normalized == "/":
+            entries = self.list_folders(parent_id=0, base_path="/")
+            return PutioBrowserResponse(
+                current_path="/",
+                parent_path=None,
+                breadcrumbs=[BreadcrumbNode(name="Everything", path="/")],
+                entries=entries,
+            )
+
+        current_parent_id = 0
+        current_path = "/"
+        breadcrumbs = [BreadcrumbNode(name="Everything", path="/")]
+
+        for part in [piece for piece in normalized.strip("/").split("/") if piece]:
+            siblings = self.list_folders(parent_id=current_parent_id, base_path=current_path)
+            match = next((item for item in siblings if item.name == part), None)
+            if match is None:
+                raise ValueError(f"Put.io folder not found: {normalized}")
+            current_parent_id = int(match.id)
+            current_path = match.path
+            breadcrumbs.append(BreadcrumbNode(name=match.name, path=match.path))
+
+        entries = self.list_folders(parent_id=current_parent_id, base_path=current_path)
+        parent_path = self._parent_path(current_path)
+        return PutioBrowserResponse(
+            current_path=current_path,
+            parent_path=parent_path,
+            breadcrumbs=breadcrumbs,
+            entries=entries,
+        )
+
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        stripped = "/" + "/".join(part for part in path.strip().split("/") if part)
+        return stripped if stripped != "" else "/"
+
+    @staticmethod
+    def _join_path(parent: str, child: str) -> str:
+        if parent == "/":
+            return f"/{child}"
+        return f"{parent.rstrip('/')}/{child}"
+
+    @staticmethod
+    def _parent_path(path: str) -> str | None:
+        if path == "/":
+            return None
+        parts = [part for part in path.strip("/").split("/") if part]
+        if len(parts) <= 1:
+            return "/"
+        return "/" + "/".join(parts[:-1])

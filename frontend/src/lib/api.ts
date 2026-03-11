@@ -11,6 +11,18 @@ export type FolderNode = {
   child_count: number;
 };
 
+export type BreadcrumbNode = {
+  name: string;
+  path: string;
+};
+
+export type PutioBrowser = {
+  current_path: string;
+  parent_path?: string | null;
+  breadcrumbs: BreadcrumbNode[];
+  entries: FolderNode[];
+};
+
 export type JobSummary = {
   id: string;
   label: string;
@@ -47,6 +59,7 @@ export type JellyfinSettings = {
   api_key: string;
   refresh_after_sync: boolean;
   refresh_only_on_change: boolean;
+  selected_library_ids: string[];
 };
 
 export type SyncDefaults = {
@@ -65,6 +78,8 @@ export type DashboardResponse = {
   settings: AppSettings;
   connections: ConnectionStatus[];
   folders: FolderNode[];
+  putio_browser: PutioBrowser;
+  jellyfin_libraries: JellyfinLibrary[];
   destinations: string[];
   jobs: JobSummary[];
   putio_connected: boolean;
@@ -98,6 +113,14 @@ export type JobDetail = {
   error_message?: string | null;
 };
 
+export type JellyfinLibrary = {
+  id: string;
+  name: string;
+  collection_type?: string | null;
+  locations: string[];
+  refresh_status?: string | null;
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 async function readError(response: Response): Promise<string> {
@@ -111,6 +134,14 @@ async function readError(response: Response): Promise<string> {
 
 export async function fetchDashboard(): Promise<DashboardResponse> {
   const response = await fetch(`${API_BASE_URL}/api/dashboard`);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function browsePutio(path: string): Promise<PutioBrowser> {
+  const response = await fetch(`${API_BASE_URL}/api/putio/browser?path=${encodeURIComponent(path)}`);
   if (!response.ok) {
     throw new Error(await readError(response));
   }
@@ -135,6 +166,15 @@ export async function previewSync(payload: {
   }
 
   return response.json();
+}
+
+export async function fetchJellyfinLibraries(): Promise<JellyfinLibrary[]> {
+  const response = await fetch(`${API_BASE_URL}/api/jellyfin/libraries`);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  const payload = await response.json();
+  return payload.libraries;
 }
 
 export async function runSync(payload: {

@@ -6,9 +6,12 @@ from app.api.schemas import (
     AuthStartResponse,
     DashboardResponse,
     HealthResponse,
+    JellyfinLibrariesResponse,
+    JellyfinLibrary,
     JellyfinTestResponse,
     JobDetailResponse,
     JobsResponse,
+    PutioBrowserResponse,
     SaveSettingsRequest,
     SettingsResponse,
     SyncPreviewRequest,
@@ -58,6 +61,26 @@ def dashboard(
 ) -> DashboardResponse:
     putio = PutioService(settings, state)
     jellyfin = JellyfinService(settings, state)
+    try:
+        browser = putio.browse_path("/")
+    except ValueError:
+        browser = PutioBrowserResponse(current_path="/", parent_path=None, breadcrumbs=[], entries=[])
+
+    try:
+        jellyfin_libraries = jellyfin.list_libraries()
+    except Exception:
+        jellyfin_libraries = []
+
+    destination_candidates = [state.settings.sync_defaults.destination_path]
+    for library in jellyfin_libraries:
+        destination_candidates.extend(library.locations)
+    destination_candidates.extend(
+        [
+            str(settings.storage_path),
+            str(settings.storage_path / "staging"),
+            str(settings.storage_path / "library" / "movies"),
+        ]
+    )
     return DashboardResponse(
         product_name=settings.product_name,
         tagline="A calmer control plane for syncing cloud media into local libraries.",
@@ -66,13 +89,10 @@ def dashboard(
             putio.connection_status(),
             jellyfin.connection_status(),
         ],
-        folders=putio.list_folders(),
-        destinations=[
-            state.settings.sync_defaults.destination_path,
-            str(settings.storage_path),
-            str(settings.storage_path / "staging"),
-            str(settings.storage_path / "library" / "movies"),
-        ],
+        folders=browser.entries,
+        putio_browser=browser,
+        jellyfin_libraries=jellyfin_libraries,
+        destinations=list(dict.fromkeys(destination_candidates)),
         jobs=[
             {
                 "id": job.id,
@@ -88,6 +108,30 @@ def dashboard(
         putio_connected=state.settings.putio.token is not None,
         jellyfin_enabled=state.settings.jellyfin.enabled,
     )
+
+
+@router.get("/putio/browser", response_model=PutioBrowserResponse)
+def browse_putio(
+    path: str = Query(default="/"),
+    settings: Settings = Depends(settings_dependency),
+    state: AppState = Depends(state_dependency),
+) -> PutioBrowserResponse:
+    try:
+        return PutioService(settings, state).browse_path(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/jellyfin/libraries", response_model=JellyfinLibrariesResponse)
+def jellyfin_libraries(
+    settings: Settings = Depends(settings_dependency),
+    state: AppState = Depends(state_dependency),
+) -> JellyfinLibrariesResponse:
+    try:
+        libraries = JellyfinService(settings, state).list_libraries()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JellyfinLibrariesResponse(libraries=libraries)
 
 
 @router.get("/settings", response_model=SettingsResponse)

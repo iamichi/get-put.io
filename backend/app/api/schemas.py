@@ -28,6 +28,26 @@ class FolderNode(BaseModel):
     child_count: int = 0
 
 
+class BreadcrumbNode(BaseModel):
+    name: str
+    path: str
+
+
+class PutioBrowserResponse(BaseModel):
+    current_path: str
+    parent_path: str | None = None
+    breadcrumbs: list[BreadcrumbNode]
+    entries: list[FolderNode]
+
+
+class JellyfinLibrary(BaseModel):
+    id: str
+    name: str
+    collection_type: str | None = None
+    locations: list[str] = Field(default_factory=list)
+    refresh_status: str | None = None
+
+
 class JobSummary(BaseModel):
     id: str
     label: str
@@ -44,6 +64,8 @@ class DashboardResponse(BaseModel):
     settings: AppSettings
     connections: list[ConnectionStatus]
     folders: list[FolderNode]
+    putio_browser: PutioBrowserResponse
+    jellyfin_libraries: list[JellyfinLibrary]
     destinations: list[str]
     jobs: list[JobSummary]
     putio_connected: bool
@@ -79,6 +101,10 @@ class SaveSettingsRequest(BaseModel):
 class JellyfinTestResponse(BaseModel):
     ok: bool
     message: str
+
+
+class JellyfinLibrariesResponse(BaseModel):
+    libraries: list[JellyfinLibrary]
 
 
 class JobDetailResponse(BaseModel):

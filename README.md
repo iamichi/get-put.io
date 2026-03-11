@@ -46,13 +46,12 @@ This project intentionally starts as an external service instead of a Jellyfin p
 
 This initial repo includes:
 - a FastAPI backend with persisted settings, Put.io OAuth, runnable `rclone` jobs, and a Jellyfin refresh hook
-- a polished frontend shell for integration setup, sync previews, and live job logs
+- a polished frontend shell for integration setup, nested Put.io folder browsing, library-aware destination choices, sync previews, and live job logs
 - a single-image Docker build that packages the built frontend with the backend
 - a Proxmox LXC creation script plus macOS native and Apple container launch scripts
 
 What is still stubbed:
 - recurring job scheduling
-- deeper Put.io folder browsing beyond the root level
 - cancellation, retries, and richer transfer metrics
 - multi-user auth and permissions
 

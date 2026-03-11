@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from app.api.schemas import ConnectionStatus
+from app.api.schemas import ConnectionStatus, JellyfinLibrary
 from app.config import Settings
 from app.models.state import AppState
 
@@ -49,6 +49,34 @@ class JellyfinService:
             timeout=60,
         )
         response.raise_for_status()
+
+    def list_libraries(self) -> list[JellyfinLibrary]:
+        jellyfin = self.state.settings.jellyfin
+        if not jellyfin.base_url or not jellyfin.api_key:
+            return []
+
+        response = httpx.get(
+            f"{jellyfin.base_url.rstrip('/')}/Library/VirtualFolders",
+            headers=self._headers(jellyfin.api_key),
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        libraries: list[JellyfinLibrary] = []
+        for item in payload:
+            item_id = item.get("ItemId")
+            if not item_id:
+                continue
+            libraries.append(
+                JellyfinLibrary(
+                    id=item_id,
+                    name=item.get("Name") or "Unnamed library",
+                    collection_type=item.get("CollectionType"),
+                    locations=item.get("Locations") or [],
+                    refresh_status=item.get("RefreshStatus"),
+                )
+            )
+        return libraries
 
     @staticmethod
     def _headers(api_key: str) -> dict[str, str]:
