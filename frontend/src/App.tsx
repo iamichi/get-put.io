@@ -5,7 +5,9 @@ import {
   createSchedule,
   DashboardResponse,
   deleteSchedule,
+  fetchJellyfinLibraries,
   JobDetail,
+  JellyfinLibrary,
   PutioBrowser,
   RecurringSchedule,
   browsePutio,
@@ -82,6 +84,7 @@ export default function App() {
   const [dashboard, setDashboard] = useState<DashboardResponse>(fallbackDashboard);
   const [jobs, setJobs] = useState<JobDetail[]>([]);
   const [putioBrowser, setPutioBrowser] = useState<PutioBrowser>(fallbackDashboard.putio_browser);
+  const [jellyfinLibraries, setJellyfinLibraries] = useState<JellyfinLibrary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>("putio");
@@ -195,6 +198,39 @@ export default function App() {
       window.clearTimeout(timer);
     };
   }, [settingsSaved, jellyfinMessage, jobMessage, scheduleMessage]);
+
+  useEffect(() => {
+    if (activeTab !== "jellyfin") {
+      return;
+    }
+    if (!settingsDraft.jellyfin.enabled || !settingsDraft.jellyfin.base_url.trim()) {
+      setJellyfinLibraries([]);
+      return;
+    }
+
+    let active = true;
+
+    async function loadLibraries() {
+      try {
+        const libraries = await fetchJellyfinLibraries();
+        if (active) {
+          setJellyfinLibraries(libraries);
+        }
+      } catch (issue) {
+        if (!active) {
+          return;
+        }
+        setJellyfinLibraries([]);
+        setSettingsError(issue instanceof Error ? issue.message : "Unable to load Jellyfin libraries.");
+      }
+    }
+
+    void loadLibraries();
+
+    return () => {
+      active = false;
+    };
+  }, [activeTab, settingsDraft.jellyfin.enabled, settingsDraft.jellyfin.base_url, settingsSaved]);
 
   async function handleRunNow() {
     setRunError(null);
@@ -439,9 +475,7 @@ export default function App() {
   const latestFinishedJob = jobs.find((job) => job.status === "completed" || job.status === "failed");
   const syncFocusJob = activeSyncJob ?? selectedJob;
   const selectedLibraryIds = new Set(settingsDraft.jellyfin.selected_library_ids);
-  const selectedLibraries = dashboard.jellyfin_libraries.filter((library) =>
-    selectedLibraryIds.has(library.id),
-  );
+  const selectedLibraries = jellyfinLibraries.filter((library) => selectedLibraryIds.has(library.id));
   const nativeRedirectUri = "http://localhost:8000/api/auth/putio/callback";
   const containerRedirectUri = "http://localhost:8787/api/auth/putio/callback";
   const formatTimestamp = (value?: string | null) => {
@@ -1003,10 +1037,10 @@ export default function App() {
                   <div className="section-heading compact-heading">
                     <h3>Jellyfin libraries</h3>
                     <span className="small-note">
-                      {dashboard.jellyfin_libraries.length ? "Selectable" : "Connect to load"}
+                      {jellyfinLibraries.length ? "Selectable" : "Connect to load"}
                     </span>
                   </div>
-                  {dashboard.jellyfin_libraries.map((library) => (
+                  {jellyfinLibraries.map((library) => (
                     <div className="library-card" key={library.id}>
                       <label className="toggle-row">
                         <input

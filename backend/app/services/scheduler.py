@@ -11,6 +11,7 @@ from app.api.schemas import SyncPreviewRequest
 from app.config import Settings, get_settings
 from app.models.state import AppState, RecurringSchedule, utc_now
 from app.services.jobs import JobService
+from app.services.paths import normalize_destination_path
 from app.services.state import StateStore, get_state_store
 
 
@@ -45,13 +46,14 @@ class SchedulerService:
         interval_hours: int,
         daily_time: str,
     ) -> RecurringSchedule:
+        normalized_destination = normalize_destination_path(self.settings, destination_path)
         schedule = RecurringSchedule(
             id=f"schedule-{uuid.uuid4().hex[:12]}",
             name=name,
             enabled=enabled,
             mode=mode,
             folder_path=folder_path,
-            destination_path=destination_path,
+            destination_path=normalized_destination,
             schedule_type=schedule_type,
             interval_hours=interval_hours,
             daily_time=daily_time,
@@ -72,6 +74,7 @@ class SchedulerService:
         interval_hours: int,
         daily_time: str,
     ) -> RecurringSchedule:
+        normalized_destination = normalize_destination_path(self.settings, destination_path)
         def mutate(state: AppState) -> RecurringSchedule:
             current = state.get_schedule(schedule_id)
             if current is None:
@@ -82,7 +85,7 @@ class SchedulerService:
             updated.enabled = enabled
             updated.mode = mode  # type: ignore[assignment]
             updated.folder_path = folder_path
-            updated.destination_path = destination_path
+            updated.destination_path = normalized_destination
             updated.schedule_type = schedule_type  # type: ignore[assignment]
             updated.interval_hours = interval_hours
             updated.daily_time = daily_time

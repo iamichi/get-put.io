@@ -13,6 +13,14 @@ from app.services.scheduler import get_scheduler_service
 settings = get_settings()
 
 
+def resolve_static_asset(static_root: Path, full_path: str) -> Path | None:
+    candidate = (static_root / Path(full_path)).resolve()
+    resolved_root = static_root.resolve()
+    if candidate.is_relative_to(resolved_root) and candidate.exists() and candidate.is_file():
+        return candidate
+    return None
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     scheduler = get_scheduler_service()
@@ -50,7 +58,7 @@ if static_dir.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def frontend_catch_all(full_path: str) -> FileResponse:
-        candidate = static_dir / Path(full_path)
-        if candidate.exists() and candidate.is_file():
+        candidate = resolve_static_asset(static_dir, full_path)
+        if candidate is not None:
             return FileResponse(candidate)
         return FileResponse(static_dir / "index.html")

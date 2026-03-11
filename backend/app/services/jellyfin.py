@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ipaddress
+
 import httpx
+from urllib.parse import urlparse
 
 from app.api.schemas import ConnectionStatus, JellyfinLibrary
 from app.config import Settings
@@ -26,6 +29,7 @@ class JellyfinService:
         jellyfin = self.state.settings.jellyfin
         if not jellyfin.base_url or not jellyfin.api_key:
             raise ValueError("Jellyfin base URL and API key are required.")
+        self.validate_base_url(jellyfin.base_url)
 
         response = httpx.get(
             f"{jellyfin.base_url.rstrip('/')}/System/Info",
@@ -42,6 +46,7 @@ class JellyfinService:
             return
         if not jellyfin.base_url or not jellyfin.api_key:
             raise ValueError("Jellyfin base URL and API key are required.")
+        self.validate_base_url(jellyfin.base_url)
 
         response = httpx.post(
             f"{jellyfin.base_url.rstrip('/')}/Library/Refresh",
@@ -54,6 +59,7 @@ class JellyfinService:
         jellyfin = self.state.settings.jellyfin
         if not jellyfin.base_url or not jellyfin.api_key:
             return []
+        self.validate_base_url(jellyfin.base_url)
 
         response = httpx.get(
             f"{jellyfin.base_url.rstrip('/')}/Library/VirtualFolders",
@@ -84,3 +90,20 @@ class JellyfinService:
             "Authorization": f'MediaBrowser Token="{api_key}"',
             "X-Emby-Token": api_key,
         }
+
+    @staticmethod
+    def validate_base_url(base_url: str) -> None:
+        parsed = urlparse(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Invalid Jellyfin URL.")
+        if parsed.username or parsed.password:
+            raise ValueError("Jellyfin URL must not include embedded credentials.")
+        host = parsed.hostname
+        if host is None:
+            raise ValueError("Invalid Jellyfin URL.")
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            return
+        if address.is_link_local or address.is_multicast or address.is_reserved or address.is_unspecified:
+            raise ValueError("Jellyfin URL must point to a unicast host.")

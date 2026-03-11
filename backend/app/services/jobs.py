@@ -12,6 +12,7 @@ from app.api.schemas import SyncPreviewRequest, SyncPreviewResponse
 from app.config import Settings
 from app.models.state import AppState, SyncJobRecord
 from app.services.jellyfin import JellyfinService
+from app.services.paths import normalize_destination_path
 from app.services.rclone import RcloneService
 from app.services.state import StateStore
 
@@ -70,7 +71,10 @@ class JobService:
 
     def preview(self, payload: SyncPreviewRequest) -> SyncPreviewResponse:
         state = self.state_store.snapshot()
-        return RcloneService(self.settings, state).preview(payload)
+        normalized_destination = normalize_destination_path(self.settings, payload.destination_path)
+        return RcloneService(self.settings, state).preview(
+            payload.model_copy(update={"destination_path": normalized_destination})
+        )
 
     def start_job(
         self,
@@ -81,6 +85,8 @@ class JobService:
         triggered_by: Literal["manual", "schedule"] = "manual",
     ) -> SyncJobRecord:
         state = self.state_store.snapshot()
+        normalized_destination = normalize_destination_path(self.settings, payload.destination_path)
+        payload = payload.model_copy(update={"destination_path": normalized_destination})
         if state.settings.putio.token is None:
             raise ValueError("Connect Put.io before starting a sync job.")
         preview = RcloneService(self.settings, state).preview(payload)

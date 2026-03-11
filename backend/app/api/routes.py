@@ -27,6 +27,7 @@ from app.config import Settings, get_settings
 from app.models.state import AppState
 from app.services.jobs import JobService
 from app.services.jellyfin import JellyfinService
+from app.services.paths import normalize_destination_path
 from app.services.putio import PutioService
 from app.services.scheduler import SchedulerService, get_scheduler_service
 from app.services.state import StateStore, get_state_store
@@ -45,6 +46,15 @@ def oauth_error_page(message: str, *, status_code: int = 400) -> HTMLResponse:
         f"<h1>Put.io login failed</h1><p>{safe_message}</p>",
         status_code=status_code,
     )
+
+
+def redact_settings(settings_model):
+    safe_settings = settings_model.model_copy(deep=True)
+    safe_settings.putio.client_secret = ""
+    safe_settings.putio.token = None
+    safe_settings.putio.oauth_state = None
+    safe_settings.jellyfin.api_key = ""
+    return safe_settings
 
 
 def settings_dependency() -> Settings:
@@ -83,20 +93,12 @@ def dashboard(
     state: AppState = Depends(state_dependency),
 ) -> DashboardResponse:
     putio = PutioService(settings, state)
-    jellyfin = JellyfinService(settings, state)
     try:
         browser = putio.browse_path("/")
     except ValueError:
         browser = PutioBrowserResponse(current_path="/", parent_path=None, breadcrumbs=[], entries=[])
 
-    try:
-        jellyfin_libraries = jellyfin.list_libraries()
-    except Exception:
-        jellyfin_libraries = []
-
     destination_candidates = [state.settings.sync_defaults.destination_path]
-    for library in jellyfin_libraries:
-        destination_candidates.extend(library.locations)
     destination_candidates.extend(
         [
             str(settings.storage_path),
@@ -107,14 +109,14 @@ def dashboard(
     return DashboardResponse(
         product_name=settings.product_name,
         tagline="A calmer control plane for syncing cloud media into local libraries.",
-        settings=state.settings,
+        settings=redact_settings(state.settings),
         connections=[
             putio.connection_status(),
-            jellyfin.connection_status(),
+            JellyfinService(settings, state).connection_status(),
         ],
         folders=browser.entries,
         putio_browser=browser,
-        jellyfin_libraries=jellyfin_libraries,
+        jellyfin_libraries=[],
         destinations=[candidate for candidate in dict.fromkeys(destination_candidates) if candidate],
         jobs=[
             {
@@ -163,26 +165,42 @@ def jellyfin_libraries(
 
 @router.get("/settings", response_model=SettingsResponse)
 def get_settings_route(state: AppState = Depends(state_dependency)) -> SettingsResponse:
-    return SettingsResponse(settings=state.settings)
+    return SettingsResponse(settings=redact_settings(state.settings))
 
 
 @router.put("/settings", response_model=SettingsResponse)
 def save_settings(
     payload: SaveSettingsRequest,
+    settings: Settings = Depends(settings_dependency),
     store: StateStore = Depends(state_store_dependency),
 ) -> SettingsResponse:
+    try:
+        if payload.settings.jellyfin.base_url:
+            JellyfinService.validate_base_url(payload.settings.jellyfin.base_url)
+        if payload.settings.sync_defaults.destination_path:
+            payload.settings.sync_defaults.destination_path = normalize_destination_path(
+                settings,
+                payload.settings.sync_defaults.destination_path,
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     def mutate(state: AppState) -> AppState:
         next_settings = payload.settings.model_copy(deep=True)
+        if not next_settings.putio.client_secret:
+            next_settings.putio.client_secret = state.settings.putio.client_secret
         next_settings.putio.token = state.settings.putio.token
         next_settings.putio.oauth_state = state.settings.putio.oauth_state
         next_settings.putio.account_username = state.settings.putio.account_username
         next_settings.putio.account_user_id = state.settings.putio.account_user_id
         next_settings.putio.connected_at = state.settings.putio.connected_at
+        if not next_settings.jellyfin.api_key:
+            next_settings.jellyfin.api_key = state.settings.jellyfin.api_key
         state.settings = next_settings
         return state
 
     state = store.mutate(mutate)
-    return SettingsResponse(settings=state.settings)
+    return SettingsResponse(settings=redact_settings(state.settings))
 
 
 @router.get("/auth/putio/start", response_model=AuthStartResponse)
@@ -261,7 +279,7 @@ def disconnect_putio(store: StateStore = Depends(state_store_dependency)) -> Set
         return state
 
     state = store.mutate(mutate)
-    return SettingsResponse(settings=state.settings)
+    return SettingsResponse(settings=redact_settings(state.settings))
 
 
 @router.post("/auth/putio/manual-token", response_model=SettingsResponse)
@@ -287,7 +305,7 @@ def save_putio_manual_token(
         return state_model
 
     state = store.mutate(mutate)
-    return SettingsResponse(settings=state.settings)
+    return SettingsResponse(settings=redact_settings(state.settings))
 
 
 @router.post("/jellyfin/test", response_model=JellyfinTestResponse)
@@ -308,7 +326,10 @@ def preview_job(
     settings: Settings = Depends(settings_dependency),
     store: StateStore = Depends(state_store_dependency),
 ) -> SyncPreviewResponse:
-    return JobService(settings, store).preview(payload)
+    try:
+        return JobService(settings, store).preview(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/jobs/run", response_model=JobDetailResponse)
@@ -337,7 +358,10 @@ def create_schedule(
     payload: SaveScheduleRequest,
     scheduler: SchedulerService = Depends(scheduler_dependency),
 ) -> ScheduleResponse:
-    schedule = scheduler.create_schedule(**payload.model_dump())
+    try:
+        schedule = scheduler.create_schedule(**payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ScheduleResponse.model_validate(schedule.model_dump())
 
 
@@ -351,6 +375,8 @@ def update_schedule(
         schedule = scheduler.update_schedule(schedule_id, **payload.model_dump())
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Schedule not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ScheduleResponse.model_validate(schedule.model_dump())
 
 
